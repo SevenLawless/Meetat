@@ -107,10 +107,11 @@ const getNotifications = async (userId, options = {}) => {
   
   const [notifications] = await db.query(query, params);
   
-  // Parse payload JSON
+  // Parse payload JSON and format created_at as ISO string for consistency
   return notifications.map(n => ({
     ...n,
-    payload: typeof n.payload === 'string' ? JSON.parse(n.payload) : n.payload
+    payload: typeof n.payload === 'string' ? JSON.parse(n.payload) : n.payload,
+    created_at: n.created_at instanceof Date ? n.created_at.toISOString() : new Date(n.created_at).toISOString()
   }));
 };
 

@@ -77,7 +77,18 @@ const formatTime = (date) => {
   if (!date) return 'Just now';
   
   const now = new Date();
-  const notificationDate = new Date(date);
+  let notificationDate;
+  
+  // Handle different date formats
+  if (date instanceof Date) {
+    notificationDate = date;
+  } else if (typeof date === 'string') {
+    // Parse ISO string or other date string formats
+    notificationDate = new Date(date);
+  } else {
+    // Try to convert to Date
+    notificationDate = new Date(date);
+  }
   
   // Handle invalid dates
   if (isNaN(notificationDate.getTime())) {
@@ -85,6 +96,12 @@ const formatTime = (date) => {
   }
   
   const diff = now - notificationDate;
+  
+  // Handle negative differences (future dates) - shouldn't happen but handle gracefully
+  if (diff < 0) {
+    return 'Just now';
+  }
+  
   const seconds = Math.floor(diff / 1000);
   const minutes = Math.floor(diff / 60000);
   const hours = Math.floor(diff / 3600000);
