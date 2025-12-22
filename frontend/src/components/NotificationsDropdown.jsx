@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../services/api';
 import { useToast } from '../hooks/useToast';
 import ToastContainer from './ToastContainer';
+import { getNotificationIconColor, notificationColors } from '../config/colors';
 import {
   Bell,
   AtSign,
@@ -22,25 +23,27 @@ import {
 
 const getNotificationIcon = (type) => {
   const iconClass = "w-4 h-4";
+  const iconColor = getNotificationIconColor(type);
+  
   switch (type) {
     case 'mention':
-      return <AtSign className={`${iconClass} text-primary-600`} />;
+      return <AtSign className={`${iconClass} ${iconColor}`} />;
     case 'assignment':
-      return <UserPlus className={`${iconClass} text-emerald-600`} />;
+      return <UserPlus className={`${iconClass} ${iconColor}`} />;
     case 'unassignment':
-      return <UserMinus className={`${iconClass} text-amber-600`} />;
+      return <UserMinus className={`${iconClass} ${iconColor}`} />;
     case 'status_change':
-      return <CheckCircle className={`${iconClass} text-blue-600`} />;
+      return <CheckCircle className={`${iconClass} ${iconColor}`} />;
     case 'comment_added':
-      return <MessageSquare className={`${iconClass} text-purple-600`} />;
+      return <MessageSquare className={`${iconClass} ${iconColor}`} />;
     case 'task_deleted':
-      return <Trash2 className={`${iconClass} text-red-600`} />;
+      return <Trash2 className={`${iconClass} ${iconColor}`} />;
     case 'project_invitation':
-      return <FolderPlus className={`${iconClass} text-primary-600`} />;
+      return <FolderPlus className={`${iconClass} ${iconColor}`} />;
     case 'role_change':
-      return <Shield className={`${iconClass} text-amber-600`} />;
+      return <Shield className={`${iconClass} ${iconColor}`} />;
     default:
-      return <Bell className={`${iconClass} text-surface-400`} />;
+      return <Bell className={`${iconClass} ${iconColor}`} />;
   }
 };
 
@@ -71,13 +74,24 @@ const getNotificationText = (notification) => {
 };
 
 const formatTime = (date) => {
+  if (!date) return 'Just now';
+  
   const now = new Date();
-  const diff = now - new Date(date);
+  const notificationDate = new Date(date);
+  
+  // Handle invalid dates
+  if (isNaN(notificationDate.getTime())) {
+    return 'Just now';
+  }
+  
+  const diff = now - notificationDate;
+  const seconds = Math.floor(diff / 1000);
   const minutes = Math.floor(diff / 60000);
   const hours = Math.floor(diff / 3600000);
   const days = Math.floor(diff / 86400000);
 
-  if (minutes < 1) return 'Just now';
+  if (seconds < 10) return 'Just now';
+  if (seconds < 60) return `${seconds}s ago`;
   if (minutes < 60) return `${minutes}m ago`;
   if (hours < 24) return `${hours}h ago`;
   return `${days}d ago`;
@@ -221,7 +235,7 @@ const NotificationsDropdown = ({ onClose }) => {
       {/* Header */}
       <div className="px-4 py-3 border-b border-surface-100">
         <div className="flex items-center justify-between mb-2">
-          <h3 className="font-semibold text-surface-900">Notifications</h3>
+          <h3 className={`font-semibold ${notificationColors.headerText}`}>Notifications</h3>
           <div className="flex items-center gap-1">
             {bulkMode ? (
               <>
@@ -236,7 +250,7 @@ const NotificationsDropdown = ({ onClose }) => {
                 <button
                   onClick={handleBulkDelete}
                   disabled={selectedIds.size === 0}
-                  className="icon-btn text-red-600 hover:text-red-700"
+                  className={`icon-btn ${notificationColors.deleteButton}`}
                   title="Delete selected"
                 >
                   <Trash2 className="w-4 h-4" />
@@ -283,8 +297,8 @@ const NotificationsDropdown = ({ onClose }) => {
             onClick={() => setFilter('all')}
             className={`px-3 py-1 text-xs font-medium rounded-lg transition-colors ${
               filter === 'all'
-                ? 'bg-primary-100 text-primary-700'
-                : 'text-surface-600 hover:bg-surface-100'
+                ? notificationColors.filterActive
+                : notificationColors.filterInactive
             }`}
           >
             All ({notifications.length})
@@ -293,8 +307,8 @@ const NotificationsDropdown = ({ onClose }) => {
             onClick={() => setFilter('unread')}
             className={`px-3 py-1 text-xs font-medium rounded-lg transition-colors ${
               filter === 'unread'
-                ? 'bg-primary-100 text-primary-700'
-                : 'text-surface-600 hover:bg-surface-100'
+                ? notificationColors.filterActive
+                : notificationColors.filterInactive
             }`}
           >
             Unread ({unreadCount})
@@ -307,9 +321,9 @@ const NotificationsDropdown = ({ onClose }) => {
         {filteredNotifications.length === 0 ? (
           <div className="px-4 py-12 text-center">
             <div className="w-12 h-12 rounded-full bg-surface-100 flex items-center justify-center mx-auto mb-3">
-              <Bell className="w-6 h-6 text-surface-400" />
+              <Bell className={`w-6 h-6 ${notificationColors.emptyStateIcon}`} />
             </div>
-            <p className="text-surface-500 text-sm">
+            <p className={`${notificationColors.emptyStateText} text-sm`}>
               {filter === 'unread' ? 'No unread notifications' : 'No notifications yet'}
             </p>
           </div>
@@ -320,8 +334,8 @@ const NotificationsDropdown = ({ onClose }) => {
               <div
                 key={notification.id}
                 className={`flex items-start gap-3 px-4 py-3 hover:bg-surface-50 transition-all border-b border-surface-50 ${
-                  !notification.read ? 'bg-primary-50/30' : 'bg-white'
-                } ${isSelected ? 'ring-2 ring-primary-500 bg-primary-50/50' : ''} ${
+                  !notification.read ? notificationColors.unreadBackground : notificationColors.readBackground
+                } ${isSelected ? `${notificationColors.selectedRing} ${notificationColors.selectedBackground}` : ''} ${
                   bulkMode ? 'cursor-default' : 'cursor-pointer'
                 }`}
                 onClick={() => {
@@ -340,14 +354,14 @@ const NotificationsDropdown = ({ onClose }) => {
                       checked={isSelected}
                       onChange={() => handleToggleSelection(notification.id)}
                       onClick={(e) => e.stopPropagation()}
-                      className="w-4 h-4 rounded border-surface-300 text-primary-600 focus:ring-primary-500"
+                      className={`w-4 h-4 rounded ${notificationColors.checkbox}`}
                     />
                   </div>
                 )}
 
                 {/* Unread indicator */}
                 {!bulkMode && !notification.read && (
-                  <div className="w-2 h-2 rounded-full bg-primary-500 flex-shrink-0 mt-2" />
+                  <div className={`w-2 h-2 rounded-full ${notificationColors.unreadIndicator} flex-shrink-0 mt-2`} />
                 )}
 
                 {/* Icon */}
@@ -357,10 +371,10 @@ const NotificationsDropdown = ({ onClose }) => {
 
                 {/* Content */}
                 <div className="flex-1 min-w-0">
-                  <p className={`text-sm leading-snug ${notification.read ? 'text-surface-600' : 'text-surface-900 font-medium'}`}>
+                  <p className={`text-sm leading-snug ${notification.read ? notificationColors.textRead : notificationColors.textUnread}`}>
                     {getNotificationText(notification)}
                   </p>
-                  <p className="text-xs text-surface-400 mt-1">
+                  <p className={`text-xs ${notificationColors.timeText} mt-1`}>
                     {formatTime(notification.created_at)}
                   </p>
                 </div>
@@ -383,20 +397,20 @@ const NotificationsDropdown = ({ onClose }) => {
                       <button
                         onClick={(e) => handleMarkAsRead(e, notification.id)}
                         disabled={markingReadId === notification.id}
-                        className="p-1.5 rounded hover:bg-primary-100 hover:text-primary-700 transition-colors disabled:opacity-50"
+                        className={`p-1.5 rounded ${notificationColors.markReadButtonHover} transition-colors disabled:opacity-50`}
                         title="Mark as read"
                       >
                         {markingReadId === notification.id ? (
                           <div className="w-3.5 h-3.5 border-2 border-surface-300 border-t-primary-600 rounded-full animate-spin" />
                         ) : (
-                          <CheckCircle className="w-3.5 h-3.5 text-primary-600" />
+                          <CheckCircle className={`w-3.5 h-3.5 ${notificationColors.markReadButton}`} />
                         )}
                       </button>
                     )}
                     <button
                       onClick={(e) => handleDelete(e, notification.id)}
                       disabled={deletingId === notification.id}
-                      className="p-1.5 rounded hover:bg-red-50 hover:text-red-600 transition-colors disabled:opacity-50"
+                      className={`p-1.5 rounded ${notificationColors.deleteButtonHover} transition-colors disabled:opacity-50`}
                       title="Delete notification"
                     >
                       {deletingId === notification.id ? (

@@ -28,14 +28,35 @@ const createNotification = async (userId, actorId, type, payload) => {
       [userId, actorId, type, JSON.stringify(payload)]
     );
 
+    // Fetch the notification with actor_name and actual created_at from database
+    const [notifications] = await db.query(
+      `SELECT n.*, u.name as actor_name 
+       FROM notifications n
+       LEFT JOIN users u ON n.actor_id = u.id
+       WHERE n.id = ?`,
+      [result.insertId]
+    );
+
+    if (notifications.length === 0) {
+      throw new Error('Failed to retrieve created notification');
+    }
+
+    const dbNotification = notifications[0];
+    
+    // Parse payload if it's a string
+    const parsedPayload = typeof dbNotification.payload === 'string' 
+      ? JSON.parse(dbNotification.payload) 
+      : dbNotification.payload;
+
     const notification = {
-      id: result.insertId,
-      user_id: userId,
-      actor_id: actorId,
-      type,
-      payload,
-      read: false,
-      created_at: new Date()
+      id: dbNotification.id,
+      user_id: dbNotification.user_id,
+      actor_id: dbNotification.actor_id,
+      actor_name: dbNotification.actor_name,
+      type: dbNotification.type,
+      payload: parsedPayload,
+      read: dbNotification.read,
+      created_at: dbNotification.created_at.toISOString()
     };
 
     // Send real-time notification via WebSocket
