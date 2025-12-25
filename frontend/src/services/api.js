@@ -1,20 +1,67 @@
-// Use environment variable in production, or proxy in development
-const API_BASE = import.meta.env.VITE_API_URL 
-  ? `${import.meta.env.VITE_API_URL}/api`
-  : '/api';
+// Determine API base URL at runtime
+// This function handles cases where the build was done with localhost but deployed to production
+function getApiBase() {
+  const viteApiUrl = import.meta.env.VITE_API_URL;
+  const isProduction = import.meta.env.MODE === 'production' || import.meta.env.PROD;
+  
+  // Development: use relative path (Vite proxy handles it)
+  if (!isProduction) {
+    return '/api';
+  }
+  
+  // Production: check if VITE_API_URL is set and valid
+  if (viteApiUrl) {
+    // If it's localhost, we're likely in a misconfigured build
+    // Try to detect if we're actually in production (not localhost)
+    if (viteApiUrl.includes('localhost') && typeof window !== 'undefined') {
+      const currentHost = window.location.hostname;
+      // If we're on a real domain (not localhost), the build was misconfigured
+      if (currentHost !== 'localhost' && currentHost !== '127.0.0.1') {
+        // Log warning but try relative path as fallback
+        console.warn(
+          '⚠️ VITE_API_URL is set to localhost but app is running in production. ' +
+          'Using relative API path. Please rebuild with correct VITE_API_URL.'
+        );
+        return '/api';
+      }
+      // Actually on localhost, use the localhost URL
+      return `${viteApiUrl}/api`;
+    }
+    // Valid production URL
+    return `${viteApiUrl}/api`;
+  }
+  
+  // No VITE_API_URL set - use relative path
+  // This will work if backend and frontend are on same domain
+  // Or if Railway/proxy is configured to route /api to backend
+  return '/api';
+}
+
+let API_BASE = getApiBase();
 
 class ApiService {
   constructor() {
     this.token = localStorage.getItem('token');
     
-    // Warn in production if VITE_API_URL is not set
-    const isProduction = import.meta.env.MODE === 'production' || import.meta.env.PROD;
-    if (isProduction && !import.meta.env.VITE_API_URL) {
-      console.error(
-        '⚠️ VITE_API_URL is not set in production! ' +
-        'API requests will fail because they will hit the static file server instead of the backend. ' +
-        'Please set VITE_API_URL environment variable to your backend URL.'
-      );
+    // Runtime fix: If API_BASE contains localhost but we're clearly in production, override it
+    if (typeof window !== 'undefined' && API_BASE.includes('localhost')) {
+      const currentHost = window.location.hostname;
+      const isProduction = import.meta.env.MODE === 'production' || import.meta.env.PROD;
+      
+      if (isProduction && currentHost !== 'localhost' && currentHost !== '127.0.0.1') {
+        // We're in production but API_BASE is localhost - use relative path instead
+        console.warn(
+          '⚠️ Detected localhost API URL in production. ' +
+          'Switching to relative API path. ' +
+          'Please rebuild with correct VITE_API_URL environment variable.'
+        );
+        API_BASE = '/api';
+      }
+    }
+    
+    // Log API base for debugging (only in development)
+    if (import.meta.env.MODE === 'development') {
+      console.log('API Base URL:', API_BASE);
     }
   }
 
