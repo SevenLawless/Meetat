@@ -6,6 +6,16 @@ const API_BASE = import.meta.env.VITE_API_URL
 class ApiService {
   constructor() {
     this.token = localStorage.getItem('token');
+    
+    // Warn in production if VITE_API_URL is not set
+    const isProduction = import.meta.env.MODE === 'production' || import.meta.env.PROD;
+    if (isProduction && !import.meta.env.VITE_API_URL) {
+      console.error(
+        '⚠️ VITE_API_URL is not set in production! ' +
+        'API requests will fail because they will hit the static file server instead of the backend. ' +
+        'Please set VITE_API_URL environment variable to your backend URL.'
+      );
+    }
   }
 
   setToken(token) {
@@ -54,6 +64,17 @@ class ApiService {
       }
     } else {
       const text = await response.text();
+      // Detect if we got HTML instead of JSON (likely hitting static file server)
+      if (text.trim().startsWith('<!DOCTYPE html>') || text.trim().startsWith('<html')) {
+        const isProduction = import.meta.env.MODE === 'production' || import.meta.env.PROD;
+        const apiUrl = import.meta.env.VITE_API_URL;
+        const errorMsg = isProduction && !apiUrl
+          ? 'API configuration error: VITE_API_URL is not set. The frontend is trying to use a relative API path, but in production it needs an absolute backend URL. Please set VITE_API_URL environment variable to your backend URL (e.g., https://your-backend.railway.app).'
+          : isProduction
+          ? `API configuration error: Received HTML instead of JSON from ${url}. This usually means the API request hit the static file server instead of the backend. Please verify that VITE_API_URL is set correctly (currently: ${apiUrl || 'not set'}).`
+          : `API error: Received HTML instead of JSON from ${url}. The backend may not be running or the API URL is incorrect.`;
+        throw new Error(errorMsg);
+      }
       throw new Error(`Server error: ${response.status} ${response.statusText} - ${text.substring(0, 100)}`);
     }
 
