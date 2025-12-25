@@ -1,68 +1,51 @@
-// Determine API base URL at runtime
-// This function handles cases where the build was done with localhost but deployed to production
-function getApiBase() {
-  const viteApiUrl = import.meta.env.VITE_API_URL;
-  const isProduction = import.meta.env.MODE === 'production' || import.meta.env.PROD;
-  
-  // Development: use relative path (Vite proxy handles it)
-  if (!isProduction) {
-    return '/api';
-  }
-  
-  // Production: check if VITE_API_URL is set and valid
-  if (viteApiUrl) {
-    // If it's localhost, we're likely in a misconfigured build
-    // Try to detect if we're actually in production (not localhost)
-    if (viteApiUrl.includes('localhost') && typeof window !== 'undefined') {
-      const currentHost = window.location.hostname;
-      // If we're on a real domain (not localhost), the build was misconfigured
-      if (currentHost !== 'localhost' && currentHost !== '127.0.0.1') {
-        // Log warning but try relative path as fallback
-        console.warn(
-          '⚠️ VITE_API_URL is set to localhost but app is running in production. ' +
-          'Using relative API path. Please rebuild with correct VITE_API_URL.'
-        );
-        return '/api';
-      }
-      // Actually on localhost, use the localhost URL
-      return `${viteApiUrl}/api`;
-    }
-    // Valid production URL
-    return `${viteApiUrl}/api`;
-  }
-  
-  // No VITE_API_URL set - use relative path
-  // This will work if backend and frontend are on same domain
-  // Or if Railway/proxy is configured to route /api to backend
-  return '/api';
-}
-
-let API_BASE = getApiBase();
-
 class ApiService {
   constructor() {
     this.token = localStorage.getItem('token');
+  }
+
+  // Get API base URL dynamically at request time
+  // This handles cases where the build was done with localhost but deployed to production
+  getApiBase() {
+    const viteApiUrl = import.meta.env.VITE_API_URL;
+    const isProduction = import.meta.env.MODE === 'production' || import.meta.env.PROD;
     
-    // Runtime fix: If API_BASE contains localhost but we're clearly in production, override it
-    if (typeof window !== 'undefined' && API_BASE.includes('localhost')) {
-      const currentHost = window.location.hostname;
-      const isProduction = import.meta.env.MODE === 'production' || import.meta.env.PROD;
-      
-      if (isProduction && currentHost !== 'localhost' && currentHost !== '127.0.0.1') {
-        // We're in production but API_BASE is localhost - use relative path instead
-        console.warn(
-          '⚠️ Detected localhost API URL in production. ' +
-          'Switching to relative API path. ' +
-          'Please rebuild with correct VITE_API_URL environment variable.'
-        );
-        API_BASE = '/api';
+    // Development: use relative path (Vite proxy handles it)
+    if (!isProduction) {
+      return '/api';
+    }
+    
+    // Production: check if VITE_API_URL is set and valid
+    if (viteApiUrl) {
+      // If it's localhost, check if we're actually in production (not localhost)
+      if (viteApiUrl.includes('localhost') && typeof window !== 'undefined') {
+        const currentHost = window.location.hostname;
+        // If we're on a real domain (not localhost), the build was misconfigured
+        if (currentHost !== 'localhost' && currentHost !== '127.0.0.1') {
+          // Use relative path as fallback
+          // Note: This assumes backend is on same domain or Railway routes /api to backend
+          // For proper fix, set VITE_API_URL in Railway environment variables
+          if (!this._warnedAboutLocalhost) {
+            console.warn(
+              '⚠️ VITE_API_URL is set to localhost but app is running in production. ' +
+              'Using relative API path (/api). ' +
+              'If this doesn\'t work, please set VITE_API_URL in Railway to your backend URL.'
+            );
+            this._warnedAboutLocalhost = true;
+          }
+          return '/api';
+        }
+        // Actually on localhost, use the localhost URL
+        return `${viteApiUrl}/api`;
       }
+      // Valid production URL (not localhost)
+      return `${viteApiUrl}/api`;
     }
     
-    // Log API base for debugging (only in development)
-    if (import.meta.env.MODE === 'development') {
-      console.log('API Base URL:', API_BASE);
-    }
+    // No VITE_API_URL set - use relative path
+    // This will work if backend and frontend are on same domain
+    // Or if Railway/proxy is configured to route /api to backend
+    // For separate Railway services, you MUST set VITE_API_URL
+    return '/api';
   }
 
   setToken(token) {
@@ -79,7 +62,8 @@ class ApiService {
   }
 
   async request(endpoint, options = {}) {
-    const url = `${API_BASE}${endpoint}`;
+    const apiBase = this.getApiBase();
+    const url = `${apiBase}${endpoint}`;
     const headers = {
       'Content-Type': 'application/json',
       ...options.headers,
@@ -279,7 +263,8 @@ class ApiService {
     const formData = new FormData();
     formData.append('file', file);
 
-    const response = await fetch(`${API_BASE}/tasks/${taskId}/attachments`, {
+    const apiBase = this.getApiBase();
+    const response = await fetch(`${apiBase}/tasks/${taskId}/attachments`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${this.getToken()}`,
