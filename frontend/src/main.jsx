@@ -35,6 +35,16 @@ if (typeof window !== 'undefined') {
     }
     return originalFetch.apply(this, args);
   };
+
+  const originalSendBeacon = window.navigator?.sendBeacon?.bind(window.navigator);
+  if (originalSendBeacon) {
+    window.navigator.sendBeacon = (url, data) => {
+      if (typeof url === 'string' && url.includes('google-analytics.com')) {
+        return true;
+      }
+      return originalSendBeacon(url, data);
+    };
+  }
 }
 
 ReactDOM.createRoot(document.getElementById('root')).render(

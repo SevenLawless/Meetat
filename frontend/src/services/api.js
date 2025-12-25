@@ -3,11 +3,24 @@ class ApiService {
     this.token = localStorage.getItem('token');
   }
 
+  isLoopbackHost(hostname) {
+    if (!hostname) return false;
+    const normalized = hostname.toLowerCase();
+    return (
+      normalized === 'localhost' ||
+      normalized === '127.0.0.1' ||
+      normalized === '0.0.0.0' ||
+      normalized === '::1'
+    );
+  }
+
   // Get API base URL dynamically at request time
   // This handles cases where the build was done with localhost but deployed to production
   getApiBase() {
     const viteApiUrl = import.meta.env.VITE_API_URL;
     const isProduction = import.meta.env.MODE === 'production' || import.meta.env.PROD;
+    const currentHost = typeof window !== 'undefined' ? window.location.hostname : '';
+    const currentIsLoopback = this.isLoopbackHost(currentHost);
     
     // Development: use relative path (Vite proxy handles it)
     if (!isProduction) {
@@ -16,35 +29,49 @@ class ApiService {
     
     // Production: check if VITE_API_URL is set and valid
     if (viteApiUrl) {
-      // If it's localhost, check if we're actually in production (not localhost)
-      if (viteApiUrl.includes('localhost') && typeof window !== 'undefined') {
-        const currentHost = window.location.hostname;
-        // If we're on a real domain (not localhost), the build was misconfigured
-        if (currentHost !== 'localhost' && currentHost !== '127.0.0.1') {
-          // Use relative path as fallback
-          // Note: This assumes backend is on same domain or Railway routes /api to backend
-          // For proper fix, set VITE_API_URL in Railway environment variables
+      const normalizedApiUrl = `${viteApiUrl}`.replace(/\/$/, '');
+
+      try {
+        const parsed = new URL(normalizedApiUrl);
+        if (this.isLoopbackHost(parsed.hostname) && !currentIsLoopback) {
           if (!this._warnedAboutLocalhost) {
             console.warn(
-              '⚠️ VITE_API_URL is set to localhost but app is running in production. ' +
+              '⚠️ VITE_API_URL points to a local address, but the app is not running on localhost. ' +
               'Using relative API path (/api). ' +
-              'If this doesn\'t work, please set VITE_API_URL in Railway to your backend URL.'
+              'Set VITE_API_URL to your backend URL for production.'
             );
             this._warnedAboutLocalhost = true;
           }
           return '/api';
         }
-        // Actually on localhost, use the localhost URL
-        return `${viteApiUrl}/api`;
+      } catch {
+        const lower = normalizedApiUrl.toLowerCase();
+        if (
+          (lower.includes('localhost') || lower.includes('127.0.0.1') || lower.includes('0.0.0.0')) &&
+          !currentIsLoopback
+        ) {
+          if (!this._warnedAboutLocalhost) {
+            console.warn(
+              '⚠️ VITE_API_URL looks like a local address, but the app is not running on localhost. ' +
+              'Using relative API path (/api). ' +
+              'Set VITE_API_URL to your backend URL for production.'
+            );
+            this._warnedAboutLocalhost = true;
+          }
+          return '/api';
+        }
       }
-      // Valid production URL (not localhost)
-      return `${viteApiUrl}/api`;
+
+      return `${normalizedApiUrl}/api`;
     }
     
     // No VITE_API_URL set - use relative path
     // This will work if backend and frontend are on same domain
     // Or if Railway/proxy is configured to route /api to backend
     // For separate Railway services, you MUST set VITE_API_URL
+    if (currentIsLoopback) {
+      return 'http://localhost:3001/api';
+    }
     return '/api';
   }
 
@@ -73,10 +100,30 @@ class ApiService {
       headers['Authorization'] = `Bearer ${this.getToken()}`;
     }
 
-    const response = await fetch(url, {
-      ...options,
-      headers,
-    });
+    let response;
+    try {
+      response = await fetch(url, {
+        ...options,
+        headers,
+      });
+    } catch (error) {
+      const hostHint = (() => {
+        try {
+          const parsed = new URL(url, typeof window !== 'undefined' ? window.location.origin : undefined);
+          if (this.isLoopbackHost(parsed.hostname)) {
+            return `Cannot reach backend at ${parsed.origin}. Make sure the backend is running and listening on that port.`;
+          }
+          return `Network error while calling ${parsed.origin}.`;
+        } catch {
+          return `Network error while calling ${url}.`;
+        }
+      })();
+      const errorMessage =
+        error instanceof Error && error.message
+          ? `${hostHint} (${error.message})`
+          : hostHint;
+      throw new Error(errorMessage);
+    }
 
     // Handle connection errors gracefully
     if (!response.ok && response.status === 0) {
