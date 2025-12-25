@@ -189,6 +189,59 @@ CREATE TABLE IF NOT EXISTS ad_metrics (
     INDEX idx_date (date)
 );
 
+-- Marketing Management
+CREATE TABLE IF NOT EXISTS marketing_cards (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(100) NOT NULL UNIQUE,
+    last4 CHAR(4) NOT NULL,
+    dotation_limit DECIMAL(12, 2) NOT NULL DEFAULT 0,
+    dotation_used DECIMAL(12, 2) NOT NULL DEFAULT 0,
+    cold_balance DECIMAL(12, 2) NOT NULL DEFAULT 0,
+    real_balance DECIMAL(12, 2) NOT NULL DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_name (name)
+);
+
+CREATE TABLE IF NOT EXISTS marketing_ad_accounts (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(150) NOT NULL UNIQUE,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_name (name)
+);
+
+CREATE TABLE IF NOT EXISTS marketing_ad_account_cards (
+    ad_account_id INT NOT NULL,
+    card_id INT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (ad_account_id, card_id),
+    FOREIGN KEY (ad_account_id) REFERENCES marketing_ad_accounts(id) ON DELETE CASCADE,
+    FOREIGN KEY (card_id) REFERENCES marketing_cards(id) ON DELETE CASCADE,
+    INDEX idx_ad_account (ad_account_id),
+    INDEX idx_card (card_id)
+);
+
+CREATE TABLE IF NOT EXISTS marketing_transactions (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    type ENUM('revenue', 'expense') NOT NULL,
+    kind VARCHAR(50) NOT NULL,
+    card_id INT NOT NULL,
+    source_card_id INT NULL,
+    ad_account_id INT NULL,
+    amount DECIMAL(12, 2) NOT NULL,
+    note TEXT,
+    created_by INT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (card_id) REFERENCES marketing_cards(id) ON DELETE CASCADE,
+    FOREIGN KEY (source_card_id) REFERENCES marketing_cards(id) ON DELETE SET NULL,
+    FOREIGN KEY (ad_account_id) REFERENCES marketing_ad_accounts(id) ON DELETE SET NULL,
+    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+    INDEX idx_card (card_id),
+    INDEX idx_type (type),
+    INDEX idx_created_at (created_at)
+);
+
 -- Audit logs
 CREATE TABLE IF NOT EXISTS audit_logs (
     id INT AUTO_INCREMENT PRIMARY KEY,

@@ -20,6 +20,7 @@ const notificationRoutes = require('./routes/notifications');
 const todoRoutes = require('./routes/todos');
 const campaignRoutes = require('./routes/campaigns');
 const auditRoutes = require('./routes/audit');
+const marketingRoutes = require('./routes/marketing');
 
 const app = express();
 const server = http.createServer(app);
@@ -83,6 +84,7 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/todos', todoRoutes);
 app.use('/api/campaigns', campaignRoutes);
 app.use('/api/audit', auditRoutes);
+app.use('/api/marketing', marketingRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {

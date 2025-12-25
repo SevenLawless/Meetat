@@ -14,7 +14,8 @@ import {
   User,
   CheckSquare,
   Shield,
-  ChevronDown
+  ChevronDown,
+  Megaphone
 } from 'lucide-react';
 
 const Layout = () => {
@@ -65,6 +66,7 @@ const Layout = () => {
 
   if (isAdmin) {
     navItems.push({ path: '/admin', icon: Shield, label: 'Admin Panel' });
+    navItems.push({ path: '/marketing', icon: Megaphone, label: 'Marketing Management' });
   }
 
   return (

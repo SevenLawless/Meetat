@@ -9,6 +9,7 @@ import Dashboard from './pages/Dashboard';
 import ProjectPage from './pages/ProjectPage';
 import AdsReport from './pages/AdsReport';
 import AdminPanel from './pages/AdminPanel';
+import MarketingManagement from './pages/MarketingManagement';
 
 // Components
 import Layout from './components/Layout';
@@ -83,6 +84,11 @@ function App() {
         <Route path="admin" element={
           <ProtectedRoute adminOnly>
             <AdminPanel />
+          </ProtectedRoute>
+        } />
+        <Route path="marketing" element={
+          <ProtectedRoute adminOnly>
+            <MarketingManagement />
           </ProtectedRoute>
         } />
       </Route>

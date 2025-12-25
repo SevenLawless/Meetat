@@ -357,6 +357,83 @@ class ApiService {
     return this.request(`/campaigns/project/${projectId}/aggregate?${params}`);
   }
 
+  // Marketing Management (admin only)
+  async getMarketingOverview() {
+    return this.request('/marketing/overview');
+  }
+
+  async createMarketingCard(payload) {
+    return this.request('/marketing/cards', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async updateMarketingCard(cardId, payload) {
+    return this.request(`/marketing/cards/${cardId}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async deleteMarketingCard(cardId) {
+    return this.request(`/marketing/cards/${cardId}`, { method: 'DELETE' });
+  }
+
+  async getMarketingCardTransactions(cardId) {
+    return this.request(`/marketing/cards/${cardId}/transactions`);
+  }
+
+  async deleteMarketingTransaction(transactionId) {
+    return this.request(`/marketing/transactions/${transactionId}`, { method: 'DELETE' });
+  }
+
+  async createMarketingRevenueColdToReal(payload) {
+    return this.request('/marketing/transactions/revenue/cold-to-real', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async createMarketingRevenueFromOtherCardCold(payload) {
+    return this.request('/marketing/transactions/revenue/from-card-cold', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async createMarketingExpenseSpend(payload) {
+    return this.request('/marketing/transactions/expense/spend', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async createMarketingExpenseRealToCold(payload) {
+    return this.request('/marketing/transactions/expense/real-to-cold', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async createMarketingAdAccount(payload) {
+    return this.request('/marketing/ad-accounts', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async updateMarketingAdAccount(adAccountId, payload) {
+    return this.request(`/marketing/ad-accounts/${adAccountId}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async deleteMarketingAdAccount(adAccountId) {
+    return this.request(`/marketing/ad-accounts/${adAccountId}`, { method: 'DELETE' });
+  }
+
   // Audit logs (admin only)
   async getAuditLogs(options = {}) {
     const params = new URLSearchParams();
