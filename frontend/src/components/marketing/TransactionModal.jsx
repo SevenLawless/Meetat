@@ -21,7 +21,21 @@ const TransactionModal = ({ transaction, card, cards, adAccounts, onClose, onSav
       setAdAccountId(transaction.ad_account_id || '');
       setSourceCardId(transaction.source_card_id || '');
       setDescription(transaction.description || '');
-      setTransactionDate(transaction.transaction_date || new Date().toISOString().split('T')[0]);
+      // Format date properly for date input (yyyy-MM-dd)
+      let dateValue = transaction.transaction_date;
+      if (dateValue) {
+        // If it's an ISO string, extract just the date part
+        if (dateValue.includes('T')) {
+          dateValue = dateValue.split('T')[0];
+        }
+        // If it's a Date object, format it
+        if (dateValue instanceof Date) {
+          dateValue = dateValue.toISOString().split('T')[0];
+        }
+      } else {
+        dateValue = new Date().toISOString().split('T')[0];
+      }
+      setTransactionDate(dateValue);
     } else {
       setType('revenue');
       setSubtype('cold_to_real');
