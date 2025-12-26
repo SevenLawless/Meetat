@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prebuild": "node scripts/generate-config.js",
     "build": "vite build",
     "preview": "vite preview",
     "start": "serve -s dist -l $PORT"

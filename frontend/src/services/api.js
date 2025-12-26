@@ -15,19 +15,67 @@ class ApiService {
   }
 
   // Get API base URL dynamically at request time
+  // Priority: 1) Runtime config (window.__APP_CONFIG__), 2) Build-time config (VITE_API_URL), 3) Fallback
   // This handles cases where the build was done with localhost but deployed to production
   getApiBase() {
-    const viteApiUrl = import.meta.env.VITE_API_URL;
     const isProduction = import.meta.env.MODE === 'production' || import.meta.env.PROD;
     const currentHost = typeof window !== 'undefined' ? window.location.hostname : '';
     const currentIsLoopback = this.isLoopbackHost(currentHost);
     
+    // Check for runtime configuration first (from config.js)
+    const runtimeConfig = typeof window !== 'undefined' && window.__APP_CONFIG__;
+    const runtimeApiUrl = runtimeConfig?.API_URL;
+    
     // Development: use relative path (Vite proxy handles it)
     if (!isProduction) {
+      // In development, runtime config can override if explicitly set
+      if (runtimeApiUrl) {
+        const normalized = `${runtimeApiUrl}`.replace(/\/$/, '');
+        return `${normalized}/api`;
+      }
       return '/api';
     }
     
-    // Production: check if VITE_API_URL is set and valid
+    // Production: Priority 1 - Runtime config (from config.js)
+    if (runtimeApiUrl) {
+      const normalizedApiUrl = `${runtimeApiUrl}`.replace(/\/$/, '');
+      
+      try {
+        const parsed = new URL(normalizedApiUrl);
+        if (this.isLoopbackHost(parsed.hostname) && !currentIsLoopback) {
+          if (!this._warnedAboutLocalhost) {
+            console.warn(
+              '⚠️ Runtime API_URL points to a local address, but the app is not running on localhost. ' +
+              'Using relative API path (/api). ' +
+              'Update config.js with your backend URL for production.'
+            );
+            this._warnedAboutLocalhost = true;
+          }
+          return '/api';
+        }
+      } catch {
+        const lower = normalizedApiUrl.toLowerCase();
+        if (
+          (lower.includes('localhost') || lower.includes('127.0.0.1') || lower.includes('0.0.0.0')) &&
+          !currentIsLoopback
+        ) {
+          if (!this._warnedAboutLocalhost) {
+            console.warn(
+              '⚠️ Runtime API_URL looks like a local address, but the app is not running on localhost. ' +
+              'Using relative API path (/api). ' +
+              'Update config.js with your backend URL for production.'
+            );
+            this._warnedAboutLocalhost = true;
+          }
+          return '/api';
+        }
+      }
+      
+      return `${normalizedApiUrl}/api`;
+    }
+    
+    // Priority 2 - Build-time config (VITE_API_URL)
+    const viteApiUrl = import.meta.env.VITE_API_URL;
     if (viteApiUrl) {
       const normalizedApiUrl = `${viteApiUrl}`.replace(/\/$/, '');
 
@@ -38,7 +86,7 @@ class ApiService {
             console.warn(
               '⚠️ VITE_API_URL points to a local address, but the app is not running on localhost. ' +
               'Using relative API path (/api). ' +
-              'Set VITE_API_URL to your backend URL for production.'
+              'Set VITE_API_URL to your backend URL for production, or configure config.js.'
             );
             this._warnedAboutLocalhost = true;
           }
@@ -54,7 +102,7 @@ class ApiService {
             console.warn(
               '⚠️ VITE_API_URL looks like a local address, but the app is not running on localhost. ' +
               'Using relative API path (/api). ' +
-              'Set VITE_API_URL to your backend URL for production.'
+              'Set VITE_API_URL to your backend URL for production, or configure config.js.'
             );
             this._warnedAboutLocalhost = true;
           }
@@ -65,10 +113,9 @@ class ApiService {
       return `${normalizedApiUrl}/api`;
     }
     
-    // No VITE_API_URL set - use relative path
+    // Priority 3 - Fallback to relative path
     // This will work if backend and frontend are on same domain
     // Or if Railway/proxy is configured to route /api to backend
-    // For separate Railway services, you MUST set VITE_API_URL
     if (currentIsLoopback) {
       return 'http://localhost:3001/api';
     }
