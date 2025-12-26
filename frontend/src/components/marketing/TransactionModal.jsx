@@ -103,6 +103,7 @@ const TransactionModal = ({ transaction, card, cards, adAccounts, onClose, onSav
   const revenueSubtypes = [
     { value: 'cold_to_real', label: 'Cold → Real (Move from cold to real balance)' },
     { value: 'card_to_card', label: 'Card Transfer (From another card\'s cold balance)' },
+    { value: 'deposit', label: 'Deposit (Normal deposit to cold balance)' },
   ];
 
   const expenseSubtypes = [

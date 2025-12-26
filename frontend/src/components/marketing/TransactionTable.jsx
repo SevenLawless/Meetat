@@ -49,9 +49,9 @@ const TransactionTable = ({ cardId, onDelete, onEdit, refreshTrigger }) => {
 
   const formatCurrency = (params) => {
     if (params.value == null) return '';
-    return new Intl.NumberFormat('en-US', {
+    return new Intl.NumberFormat('fr-MA', {
       style: 'currency',
-      currency: 'USD',
+      currency: 'MAD',
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     }).format(params.value);
@@ -79,6 +79,7 @@ const TransactionTable = ({ cardId, onDelete, onEdit, refreshTrigger }) => {
         const subtypeLabels = {
           'cold_to_real': 'Cold → Real',
           'card_to_card': 'Card Transfer',
+          'deposit': 'Deposit',
           'ad_account_spend': 'Ad Spend',
           'real_to_cold': 'Real → Cold',
         };

@@ -315,6 +315,9 @@ router.post('/cards/:id/transactions', authenticate, auditLog('card_transaction'
 
           // Update destination card (increase cold balance, no dotation impact)
           newColdBalance += amount;
+        } else if (subtype === 'deposit') {
+          // Normal deposit - add to cold balance only (no dotation impact)
+          newColdBalance += amount;
         } else {
           throw new Error('Invalid revenue subtype');
         }
@@ -494,6 +497,9 @@ router.delete('/transactions/:id', authenticate, auditLog('card_transaction'), a
               );
             }
           }
+          newColdBalance -= amount;
+        } else if (transaction.subtype === 'deposit') {
+          // Reverse: subtract from cold balance
           newColdBalance -= amount;
         }
       } else if (transaction.type === 'expense') {

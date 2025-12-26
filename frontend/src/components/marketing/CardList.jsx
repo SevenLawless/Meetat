@@ -106,9 +106,9 @@ const CardList = ({ cards, onEdit, onDelete, onAddTransaction, onDeleteTransacti
             {sortedCards.map((card) => {
               const isExpanded = expandedCards.has(card.id);
               const formatCurrency = (amount) => {
-                return new Intl.NumberFormat('en-US', {
+                return new Intl.NumberFormat('fr-MA', {
                   style: 'currency',
-                  currency: 'USD',
+                  currency: 'MAD',
                   minimumFractionDigits: 2,
                   maximumFractionDigits: 2,
                 }).format(amount);
