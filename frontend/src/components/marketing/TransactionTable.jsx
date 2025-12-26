@@ -31,10 +31,6 @@ const TransactionTable = ({ cardId, onDelete, onEdit, refreshTrigger }) => {
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    loadTransactions();
-  }, [loadTransactions, refreshTrigger]);
-
   const loadTransactions = useCallback(async () => {
     try {
       setLoading(true);
@@ -46,6 +42,10 @@ const TransactionTable = ({ cardId, onDelete, onEdit, refreshTrigger }) => {
       setLoading(false);
     }
   }, [cardId]);
+
+  useEffect(() => {
+    loadTransactions();
+  }, [loadTransactions, refreshTrigger]);
 
   const formatCurrency = (params) => {
     if (params.value == null) return '';
@@ -66,32 +66,31 @@ const TransactionTable = ({ cardId, onDelete, onEdit, refreshTrigger }) => {
     });
   };
 
-  const TypeBadgeRenderer = ({ data }) => {
-    const type = data?.type;
-    const subtype = data?.subtype;
-    const className = type === 'revenue' 
-      ? 'bg-green-100 text-green-700' 
-      : 'bg-red-100 text-red-700';
-    
-    let label = type === 'revenue' ? 'Revenue' : 'Expense';
-    if (subtype) {
-      const subtypeLabels = {
-        'cold_to_real': 'Cold → Real',
-        'card_to_card': 'Card Transfer',
-        'ad_account_spend': 'Ad Spend',
-        'real_to_cold': 'Real → Cold',
-      };
-      label += ` (${subtypeLabels[subtype] || subtype})`;
-    }
-    
-    return (
-      <span className={`px-2 py-1 rounded text-xs font-medium ${className}`}>
-        {label}
-      </span>
-    );
-  };
-
   const columnDefs = useMemo(() => {
+    const TypeBadgeRenderer = ({ data }) => {
+      const type = data?.type;
+      const subtype = data?.subtype;
+      const className = type === 'revenue' 
+        ? 'bg-green-100 text-green-700' 
+        : 'bg-red-100 text-red-700';
+      
+      let label = type === 'revenue' ? 'Revenue' : 'Expense';
+      if (subtype) {
+        const subtypeLabels = {
+          'cold_to_real': 'Cold → Real',
+          'card_to_card': 'Card Transfer',
+          'ad_account_spend': 'Ad Spend',
+          'real_to_cold': 'Real → Cold',
+        };
+        label += ` (${subtypeLabels[subtype] || subtype})`;
+      }
+      
+      return (
+        <span className={`px-2 py-1 rounded text-xs font-medium ${className}`}>
+          {label}
+        </span>
+      );
+    };
     const actionsParams = {
       onEdit: async (id) => {
         const transaction = transactions.find(t => t.id === id);
