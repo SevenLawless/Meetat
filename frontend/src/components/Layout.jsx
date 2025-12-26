@@ -15,7 +15,7 @@ import {
   CheckSquare,
   Shield,
   ChevronDown,
-  Megaphone
+  CreditCard
 } from 'lucide-react';
 
 const Layout = () => {
@@ -62,11 +62,11 @@ const Layout = () => {
 
   const navItems = [
     { path: '/', icon: LayoutDashboard, label: 'Dashboard' },
+    { path: '/marketing', icon: CreditCard, label: 'Marketing Management' },
   ];
 
   if (isAdmin) {
     navItems.push({ path: '/admin', icon: Shield, label: 'Admin Panel' });
-    navItems.push({ path: '/marketing', icon: Megaphone, label: 'Marketing Management' });
   }
 
   return (

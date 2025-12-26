@@ -81,14 +81,10 @@ function App() {
         <Route index element={<Dashboard />} />
         <Route path="project/:projectId" element={<ProjectPage />} />
         <Route path="project/:projectId/ads" element={<AdsReport />} />
+        <Route path="marketing" element={<MarketingManagement />} />
         <Route path="admin" element={
           <ProtectedRoute adminOnly>
             <AdminPanel />
-          </ProtectedRoute>
-        } />
-        <Route path="marketing" element={
-          <ProtectedRoute adminOnly>
-            <MarketingManagement />
           </ProtectedRoute>
         } />
       </Route>

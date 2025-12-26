@@ -1,637 +1,800 @@
 const express = require('express');
 const db = require('../config/database');
-const { authenticate, requireAdmin } = require('../middleware/auth');
+const { authenticate } = require('../middleware/auth');
+const { auditLog } = require('../middleware/audit');
 
 const router = express.Router();
 
-const asNumber = (value) => {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : NaN;
+// Helper function to calculate available dotation
+const getAvailableDotation = (dotation, realBalance) => {
+  return parseFloat(dotation) - parseFloat(realBalance);
 };
 
-const validateMoney = (value) => {
-  const n = asNumber(value);
-  if (!Number.isFinite(n)) return null;
-  return Math.round(n * 100) / 100;
+// Helper function to get card summary
+const getCardSummary = (card) => {
+  const availableDotation = getAvailableDotation(card.dotation, card.real_balance);
+  const totalBalance = parseFloat(card.cold_balance) + parseFloat(card.real_balance);
+  return {
+    ...card,
+    available_dotation: availableDotation,
+    total_balance: totalBalance
+  };
 };
 
-const withTransaction = async (fn) => {
-  const conn = await db.getConnection();
+// Get all cards with summaries
+router.get('/cards', authenticate, async (req, res, next) => {
   try {
-    await conn.beginTransaction();
-    const result = await fn(conn);
-    await conn.commit();
-    return result;
-  } catch (err) {
-    try {
-      await conn.rollback();
-    } catch (_) {}
-    throw err;
-  } finally {
-    conn.release();
-  }
-};
+    const [cards] = await db.query(
+      'SELECT * FROM credit_cards ORDER BY name ASC'
+    );
 
-const getOverview = async () => {
-  const [[summary]] = await db.query(
-    `SELECT
-      IFNULL(SUM(cold_balance), 0) AS total_cold_balance,
-      IFNULL(SUM(real_balance), 0) AS total_real_balance,
-      IFNULL(SUM(cold_balance + real_balance), 0) AS total_balance,
-      IFNULL(SUM(dotation_limit), 0) AS total_dotation_limit,
-      IFNULL(SUM(dotation_limit - dotation_used), 0) AS total_dotation_left
-     FROM marketing_cards`
-  );
+    const cardsWithSummary = cards.map(getCardSummary);
 
-  const [cards] = await db.query(
-    `SELECT
-      id,
-      name,
-      last4,
-      dotation_limit,
-      dotation_used,
-      (dotation_limit - dotation_used) AS dotation_left,
-      cold_balance,
-      real_balance,
-      (cold_balance + real_balance) AS total_balance,
-      created_at,
-      updated_at
-     FROM marketing_cards
-     ORDER BY name ASC`
-  );
-
-  const [adAccounts] = await db.query(
-    `SELECT id, name, created_at, updated_at
-     FROM marketing_ad_accounts
-     ORDER BY name ASC`
-  );
-
-  const [links] = await db.query(
-    `SELECT aac.ad_account_id, c.id as card_id, c.name as card_name, c.last4 as card_last4
-     FROM marketing_ad_account_cards aac
-     JOIN marketing_cards c ON c.id = aac.card_id
-     ORDER BY aac.ad_account_id ASC, c.name ASC`
-  );
-
-  const cardsByAdAccount = new Map();
-  for (const row of links) {
-    if (!cardsByAdAccount.has(row.ad_account_id)) cardsByAdAccount.set(row.ad_account_id, []);
-    cardsByAdAccount.get(row.ad_account_id).push({ id: row.card_id, name: row.card_name, last4: row.card_last4 });
-  }
-
-  const enrichedAdAccounts = adAccounts.map((aa) => {
-    const linked_cards = cardsByAdAccount.get(aa.id) || [];
-    return {
-      ...aa,
-      linked_cards,
-      linked_card_ids: linked_cards.map((c) => c.id)
-    };
-  });
-
-  return { summary, cards, ad_accounts: enrichedAdAccounts };
-};
-
-router.get('/overview', authenticate, requireAdmin, async (req, res, next) => {
-  try {
-    const data = await getOverview();
-    res.json(data);
-  } catch (err) {
-    next(err);
+    res.json({ cards: cardsWithSummary });
+  } catch (error) {
+    next(error);
   }
 });
 
-router.post('/cards', authenticate, requireAdmin, async (req, res, next) => {
+// Get single card with transactions
+router.get('/cards/:id', authenticate, async (req, res, next) => {
   try {
-    const { name, last4, dotation_limit, cold_balance, real_balance } = req.body;
+    const cardId = req.params.id;
 
-    if (!name || !String(name).trim()) return res.status(400).json({ error: 'Name is required' });
-    if (!/^\d{4}$/.test(String(last4 || '').trim())) return res.status(400).json({ error: 'Last 4 digits must be exactly 4 digits' });
+    const [cards] = await db.query(
+      'SELECT * FROM credit_cards WHERE id = ?',
+      [cardId]
+    );
 
-    const dotation = validateMoney(dotation_limit);
-    const cold = validateMoney(cold_balance);
-    const real = validateMoney(real_balance);
+    if (cards.length === 0) {
+      return res.status(404).json({ error: 'Card not found' });
+    }
 
-    if (dotation === null || dotation < 0) return res.status(400).json({ error: 'Dotation must be a positive number' });
-    if (cold === null || cold < 0) return res.status(400).json({ error: 'Cold balance must be a positive number' });
-    if (real === null || real < 0) return res.status(400).json({ error: 'Real balance must be a positive number' });
+    const card = cards[0];
 
-    const dotationUsed = real;
-    if (dotationUsed > dotation) return res.status(400).json({ error: 'Real balance cannot exceed dotation' });
+    // Get transactions
+    const [transactions] = await db.query(
+      `SELECT t.*, 
+        a.name as ad_account_name,
+        sc.name as source_card_name
+       FROM card_transactions t
+       LEFT JOIN ad_accounts a ON t.ad_account_id = a.id
+       LEFT JOIN credit_cards sc ON t.source_card_id = sc.id
+       WHERE t.card_id = ?
+       ORDER BY t.transaction_date DESC, t.created_at DESC`,
+      [cardId]
+    );
 
-    const [existing] = await db.query('SELECT id FROM marketing_cards WHERE LOWER(name) = LOWER(?) LIMIT 1', [String(name).trim()]);
-    if (existing.length > 0) return res.status(409).json({ error: 'Card name must be unique' });
+    const cardWithSummary = getCardSummary(card);
+
+    res.json({ card: { ...cardWithSummary, transactions } });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Create card
+router.post('/cards', authenticate, auditLog('credit_card'), async (req, res, next) => {
+  try {
+    const { name, last_four_digits, dotation } = req.body;
+
+    if (!name || !last_four_digits || dotation === undefined) {
+      return res.status(400).json({ error: 'Name, last four digits, and dotation are required' });
+    }
+
+    if (dotation <= 0) {
+      return res.status(400).json({ error: 'Dotation must be positive' });
+    }
+
+    if (!/^\d{4}$/.test(last_four_digits)) {
+      return res.status(400).json({ error: 'Last four digits must be exactly 4 digits' });
+    }
+
+    // Check for unique name
+    const [existing] = await db.query(
+      'SELECT id FROM credit_cards WHERE name = ?',
+      [name]
+    );
+
+    if (existing.length > 0) {
+      return res.status(400).json({ error: 'Card name must be unique' });
+    }
 
     const [result] = await db.query(
-      `INSERT INTO marketing_cards (name, last4, dotation_limit, dotation_used, cold_balance, real_balance, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-      [String(name).trim(), String(last4).trim(), dotation, dotationUsed, cold, real]
+      `INSERT INTO credit_cards (name, last_four_digits, dotation, cold_balance, real_balance, created_at)
+       VALUES (?, ?, ?, 0, 0, NOW())`,
+      [name, last_four_digits, dotation]
     );
 
-    res.status(201).json({ id: result.insertId });
-  } catch (err) {
-    next(err);
+    const [newCard] = await db.query(
+      'SELECT * FROM credit_cards WHERE id = ?',
+      [result.insertId]
+    );
+
+    res.status(201).json({ card: getCardSummary(newCard[0]) });
+  } catch (error) {
+    if (error.code === 'ER_DUP_ENTRY') {
+      return res.status(400).json({ error: 'Card name must be unique' });
+    }
+    next(error);
   }
 });
 
-router.put('/cards/:cardId', authenticate, requireAdmin, async (req, res, next) => {
+// Update card
+router.put('/cards/:id', authenticate, auditLog('credit_card'), async (req, res, next) => {
   try {
-    const cardId = Number(req.params.cardId);
-    const { name, last4, dotation_limit } = req.body;
+    const cardId = req.params.id;
+    const { name, last_four_digits, dotation } = req.body;
 
-    if (!cardId) return res.status(400).json({ error: 'Invalid card ID' });
-    if (!name || !String(name).trim()) return res.status(400).json({ error: 'Name is required' });
-    if (!/^\d{4}$/.test(String(last4 || '').trim())) return res.status(400).json({ error: 'Last 4 digits must be exactly 4 digits' });
-
-    const dotation = validateMoney(dotation_limit);
-    if (dotation === null || dotation < 0) return res.status(400).json({ error: 'Dotation must be a positive number' });
-
-    const [cards] = await db.query('SELECT id, dotation_used FROM marketing_cards WHERE id = ?', [cardId]);
-    if (cards.length === 0) return res.status(404).json({ error: 'Card not found' });
-    if (cards[0].dotation_used > dotation) return res.status(400).json({ error: 'Dotation cannot be less than current dotation usage' });
-
-    const [existing] = await db.query(
-      'SELECT id FROM marketing_cards WHERE LOWER(name) = LOWER(?) AND id <> ? LIMIT 1',
-      [String(name).trim(), cardId]
+    const [cards] = await db.query(
+      'SELECT * FROM credit_cards WHERE id = ?',
+      [cardId]
     );
-    if (existing.length > 0) return res.status(409).json({ error: 'Card name must be unique' });
+
+    if (cards.length === 0) {
+      return res.status(404).json({ error: 'Card not found' });
+    }
+
+    const card = cards[0];
+
+    // Validate dotation if provided
+    if (dotation !== undefined && dotation <= 0) {
+      return res.status(400).json({ error: 'Dotation must be positive' });
+    }
+
+    // Validate last four digits if provided
+    if (last_four_digits && !/^\d{4}$/.test(last_four_digits)) {
+      return res.status(400).json({ error: 'Last four digits must be exactly 4 digits' });
+    }
+
+    // Check for unique name if changed
+    if (name && name !== card.name) {
+      const [existing] = await db.query(
+        'SELECT id FROM credit_cards WHERE name = ? AND id != ?',
+        [name, cardId]
+      );
+
+      if (existing.length > 0) {
+        return res.status(400).json({ error: 'Card name must be unique' });
+      }
+    }
 
     await db.query(
-      `UPDATE marketing_cards
-       SET name = ?, last4 = ?, dotation_limit = ?, updated_at = NOW()
+      `UPDATE credit_cards 
+       SET name = COALESCE(?, name),
+           last_four_digits = COALESCE(?, last_four_digits),
+           dotation = COALESCE(?, dotation),
+           updated_at = NOW()
        WHERE id = ?`,
-      [String(name).trim(), String(last4).trim(), dotation, cardId]
+      [name || null, last_four_digits || null, dotation || null, cardId]
     );
 
-    res.json({ id: cardId });
-  } catch (err) {
-    next(err);
+    const [updatedCard] = await db.query(
+      'SELECT * FROM credit_cards WHERE id = ?',
+      [cardId]
+    );
+
+    res.json({ card: getCardSummary(updatedCard[0]) });
+  } catch (error) {
+    if (error.code === 'ER_DUP_ENTRY') {
+      return res.status(400).json({ error: 'Card name must be unique' });
+    }
+    next(error);
   }
 });
 
-router.delete('/cards/:cardId', authenticate, requireAdmin, async (req, res, next) => {
+// Delete card
+router.delete('/cards/:id', authenticate, auditLog('credit_card'), async (req, res, next) => {
   try {
-    const cardId = Number(req.params.cardId);
-    if (!cardId) return res.status(400).json({ error: 'Invalid card ID' });
+    const cardId = req.params.id;
 
-    const [cards] = await db.query('SELECT id FROM marketing_cards WHERE id = ?', [cardId]);
-    if (cards.length === 0) return res.status(404).json({ error: 'Card not found' });
+    const [cards] = await db.query(
+      'SELECT * FROM credit_cards WHERE id = ?',
+      [cardId]
+    );
 
-    await db.query('DELETE FROM marketing_cards WHERE id = ?', [cardId]);
+    if (cards.length === 0) {
+      return res.status(404).json({ error: 'Card not found' });
+    }
+
+    // Transactions will be cascade deleted
+    await db.query('DELETE FROM credit_cards WHERE id = ?', [cardId]);
+
     res.json({ message: 'Card deleted' });
-  } catch (err) {
-    next(err);
+  } catch (error) {
+    next(error);
   }
 });
 
-router.get('/cards/:cardId/transactions', authenticate, requireAdmin, async (req, res, next) => {
+// Get transactions for a card
+router.get('/cards/:id/transactions', authenticate, async (req, res, next) => {
   try {
-    const cardId = Number(req.params.cardId);
-    if (!cardId) return res.status(400).json({ error: 'Invalid card ID' });
+    const cardId = req.params.id;
+
+    const [cards] = await db.query(
+      'SELECT id FROM credit_cards WHERE id = ?',
+      [cardId]
+    );
+
+    if (cards.length === 0) {
+      return res.status(404).json({ error: 'Card not found' });
+    }
 
     const [transactions] = await db.query(
-      `SELECT
-        t.id,
-        t.type,
-        t.kind,
-        t.card_id,
-        t.source_card_id,
-        t.ad_account_id,
-        t.amount,
-        t.note,
-        t.created_at,
-        u.name as created_by_name,
-        aa.name as ad_account_name,
+      `SELECT t.*, 
+        a.name as ad_account_name,
         sc.name as source_card_name
-       FROM marketing_transactions t
-       LEFT JOIN users u ON u.id = t.created_by
-       LEFT JOIN marketing_ad_accounts aa ON aa.id = t.ad_account_id
-       LEFT JOIN marketing_cards sc ON sc.id = t.source_card_id
+       FROM card_transactions t
+       LEFT JOIN ad_accounts a ON t.ad_account_id = a.id
+       LEFT JOIN credit_cards sc ON t.source_card_id = sc.id
        WHERE t.card_id = ?
-       ORDER BY t.created_at DESC`,
+       ORDER BY t.transaction_date DESC, t.created_at DESC`,
       [cardId]
     );
 
     res.json({ transactions });
-  } catch (err) {
-    next(err);
+  } catch (error) {
+    next(error);
   }
 });
 
-router.post('/ad-accounts', authenticate, requireAdmin, async (req, res, next) => {
+// Create transaction (with dotation logic)
+router.post('/cards/:id/transactions', authenticate, auditLog('card_transaction'), async (req, res, next) => {
   try {
-    const { name, linked_card_ids = [] } = req.body;
-    if (!name || !String(name).trim()) return res.status(400).json({ error: 'Name is required' });
+    const cardId = req.params.id;
+    const { type, subtype, amount, ad_account_id, source_card_id, description, transaction_date } = req.body;
 
-    const [existing] = await db.query('SELECT id FROM marketing_ad_accounts WHERE LOWER(name) = LOWER(?) LIMIT 1', [String(name).trim()]);
-    if (existing.length > 0) return res.status(409).json({ error: 'Ad account name must be unique' });
+    if (!type || !subtype || !amount || !transaction_date) {
+      return res.status(400).json({ error: 'Type, subtype, amount, and transaction_date are required' });
+    }
 
-    const cardIds = Array.isArray(linked_card_ids) ? linked_card_ids.map((id) => Number(id)).filter(Boolean) : [];
+    if (!['revenue', 'expense'].includes(type)) {
+      return res.status(400).json({ error: 'Type must be revenue or expense' });
+    }
 
-    const [result] = await withTransaction(async (conn) => {
-      const [insert] = await conn.query(
-        `INSERT INTO marketing_ad_accounts (name, created_at, updated_at)
-         VALUES (?, NOW(), NOW())`,
-        [String(name).trim()]
-      );
-      const adAccountId = insert.insertId;
-      if (cardIds.length > 0) {
-        const values = cardIds.map((cardId) => [adAccountId, cardId]);
-        await conn.query('INSERT INTO marketing_ad_account_cards (ad_account_id, card_id) VALUES ?', [values]);
-      }
-      return [{ insertId: adAccountId }];
-    });
+    if (amount <= 0) {
+      return res.status(400).json({ error: 'Amount must be positive' });
+    }
 
-    res.status(201).json({ id: result.insertId });
-  } catch (err) {
-    next(err);
-  }
-});
-
-router.put('/ad-accounts/:adAccountId', authenticate, requireAdmin, async (req, res, next) => {
-  try {
-    const adAccountId = Number(req.params.adAccountId);
-    const { name, linked_card_ids = [] } = req.body;
-    if (!adAccountId) return res.status(400).json({ error: 'Invalid ad account ID' });
-    if (!name || !String(name).trim()) return res.status(400).json({ error: 'Name is required' });
-
-    const [accounts] = await db.query('SELECT id FROM marketing_ad_accounts WHERE id = ?', [adAccountId]);
-    if (accounts.length === 0) return res.status(404).json({ error: 'Ad account not found' });
-
-    const [existing] = await db.query(
-      'SELECT id FROM marketing_ad_accounts WHERE LOWER(name) = LOWER(?) AND id <> ? LIMIT 1',
-      [String(name).trim(), adAccountId]
+    // Get card
+    const [cards] = await db.query(
+      'SELECT * FROM credit_cards WHERE id = ?',
+      [cardId]
     );
-    if (existing.length > 0) return res.status(409).json({ error: 'Ad account name must be unique' });
 
-    const cardIds = Array.isArray(linked_card_ids) ? linked_card_ids.map((id) => Number(id)).filter(Boolean) : [];
+    if (cards.length === 0) {
+      return res.status(404).json({ error: 'Card not found' });
+    }
 
-    await withTransaction(async (conn) => {
-      await conn.query(
-        `UPDATE marketing_ad_accounts SET name = ?, updated_at = NOW() WHERE id = ?`,
-        [String(name).trim(), adAccountId]
-      );
-      await conn.query('DELETE FROM marketing_ad_account_cards WHERE ad_account_id = ?', [adAccountId]);
-      if (cardIds.length > 0) {
-        const values = cardIds.map((cardId) => [adAccountId, cardId]);
-        await conn.query('INSERT INTO marketing_ad_account_cards (ad_account_id, card_id) VALUES ?', [values]);
+    const card = cards[0];
+
+    // Start transaction
+    const connection = await db.getConnection();
+    await connection.beginTransaction();
+
+    try {
+      let newColdBalance = parseFloat(card.cold_balance);
+      let newRealBalance = parseFloat(card.real_balance);
+
+      // Handle revenue transactions
+      if (type === 'revenue') {
+        if (subtype === 'cold_to_real') {
+          // Move from cold to real balance
+          if (newColdBalance < amount) {
+            throw new Error('Insufficient cold balance');
+          }
+          newColdBalance -= amount;
+          newRealBalance += amount;
+        } else if (subtype === 'card_to_card') {
+          // Transfer from another card's cold balance
+          if (!source_card_id) {
+            throw new Error('Source card ID is required for card-to-card transfers');
+          }
+
+          const [sourceCards] = await connection.query(
+            'SELECT * FROM credit_cards WHERE id = ?',
+            [source_card_id]
+          );
+
+          if (sourceCards.length === 0) {
+            throw new Error('Source card not found');
+          }
+
+          const sourceCard = sourceCards[0];
+          const sourceColdBalance = parseFloat(sourceCard.cold_balance);
+
+          if (sourceColdBalance < amount) {
+            throw new Error('Insufficient cold balance in source card');
+          }
+
+          // Update source card (decrease cold balance)
+          await connection.query(
+            'UPDATE credit_cards SET cold_balance = cold_balance - ?, updated_at = NOW() WHERE id = ?',
+            [amount, source_card_id]
+          );
+
+          // Update destination card (increase cold balance, no dotation impact)
+          newColdBalance += amount;
+        } else {
+          throw new Error('Invalid revenue subtype');
+        }
       }
-    });
+      // Handle expense transactions
+      else if (type === 'expense') {
+        if (subtype === 'ad_account_spend') {
+          // Spend from real balance on ad account
+          if (!ad_account_id) {
+            throw new Error('Ad account ID is required for ad account spend');
+          }
 
-    res.json({ id: adAccountId });
-  } catch (err) {
-    next(err);
+          const [adAccounts] = await connection.query(
+            'SELECT id FROM ad_accounts WHERE id = ?',
+            [ad_account_id]
+          );
+
+          if (adAccounts.length === 0) {
+            throw new Error('Ad account not found');
+          }
+
+          if (newRealBalance < amount) {
+            throw new Error('Insufficient real balance');
+          }
+
+          newRealBalance -= amount;
+        } else if (subtype === 'real_to_cold') {
+          // Move from real to cold balance
+          if (newRealBalance < amount) {
+            throw new Error('Insufficient real balance');
+          }
+          newRealBalance -= amount;
+          newColdBalance += amount;
+        } else {
+          throw new Error('Invalid expense subtype');
+        }
+      }
+
+      // Update card balances
+      await connection.query(
+        'UPDATE credit_cards SET cold_balance = ?, real_balance = ?, updated_at = NOW() WHERE id = ?',
+        [newColdBalance, newRealBalance, cardId]
+      );
+
+      // Insert transaction
+      const [result] = await connection.query(
+        `INSERT INTO card_transactions 
+         (card_id, type, subtype, amount, ad_account_id, source_card_id, description, transaction_date, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+        [cardId, type, subtype, amount, ad_account_id || null, source_card_id || null, description || null, transaction_date]
+      );
+
+      await connection.commit();
+
+      // Get created transaction with joins
+      const [transactions] = await db.query(
+        `SELECT t.*, 
+          a.name as ad_account_name,
+          sc.name as source_card_name
+         FROM card_transactions t
+         LEFT JOIN ad_accounts a ON t.ad_account_id = a.id
+         LEFT JOIN credit_cards sc ON t.source_card_id = sc.id
+         WHERE t.id = ?`,
+        [result.insertId]
+      );
+
+      res.status(201).json({ transaction: transactions[0] });
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  } catch (error) {
+    next(error);
   }
 });
 
-router.delete('/ad-accounts/:adAccountId', authenticate, requireAdmin, async (req, res, next) => {
+// Update transaction
+router.put('/transactions/:id', authenticate, auditLog('card_transaction'), async (req, res, next) => {
   try {
-    const adAccountId = Number(req.params.adAccountId);
-    if (!adAccountId) return res.status(400).json({ error: 'Invalid ad account ID' });
+    const transactionId = req.params.id;
+    const { description, transaction_date } = req.body;
 
-    await db.query('DELETE FROM marketing_ad_accounts WHERE id = ?', [adAccountId]);
+    const [transactions] = await db.query(
+      'SELECT * FROM card_transactions WHERE id = ?',
+      [transactionId]
+    );
+
+    if (transactions.length === 0) {
+      return res.status(404).json({ error: 'Transaction not found' });
+    }
+
+    // Only allow updating description and date
+    // Amount and type changes would require balance recalculation, which is complex
+    await db.query(
+      `UPDATE card_transactions 
+       SET description = COALESCE(?, description),
+           transaction_date = COALESCE(?, transaction_date),
+           updated_at = NOW()
+       WHERE id = ?`,
+      [description || null, transaction_date || null, transactionId]
+    );
+
+    const [updatedTransactions] = await db.query(
+      `SELECT t.*, 
+        a.name as ad_account_name,
+        sc.name as source_card_name
+       FROM card_transactions t
+       LEFT JOIN ad_accounts a ON t.ad_account_id = a.id
+       LEFT JOIN credit_cards sc ON t.source_card_id = sc.id
+       WHERE t.id = ?`,
+      [transactionId]
+    );
+
+    res.json({ transaction: updatedTransactions[0] });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Delete transaction (revert balances)
+router.delete('/transactions/:id', authenticate, auditLog('card_transaction'), async (req, res, next) => {
+  try {
+    const transactionId = req.params.id;
+
+    const [transactions] = await db.query(
+      'SELECT * FROM card_transactions WHERE id = ?',
+      [transactionId]
+    );
+
+    if (transactions.length === 0) {
+      return res.status(404).json({ error: 'Transaction not found' });
+    }
+
+    const transaction = transactions[0];
+
+    // Get card
+    const [cards] = await db.query(
+      'SELECT * FROM credit_cards WHERE id = ?',
+      [transaction.card_id]
+    );
+
+    if (cards.length === 0) {
+      return res.status(404).json({ error: 'Card not found' });
+    }
+
+    const card = cards[0];
+
+    // Start transaction
+    const connection = await db.getConnection();
+    await connection.beginTransaction();
+
+    try {
+      let newColdBalance = parseFloat(card.cold_balance);
+      let newRealBalance = parseFloat(card.real_balance);
+      const amount = parseFloat(transaction.amount);
+
+      // Reverse the transaction logic
+      if (transaction.type === 'revenue') {
+        if (transaction.subtype === 'cold_to_real') {
+          // Reverse: move from real back to cold
+          newRealBalance -= amount;
+          newColdBalance += amount;
+        } else if (transaction.subtype === 'card_to_card') {
+          // Reverse: move from this card's cold back to source card's cold
+          if (transaction.source_card_id) {
+            const [sourceCards] = await connection.query(
+              'SELECT * FROM credit_cards WHERE id = ?',
+              [transaction.source_card_id]
+            );
+
+            if (sourceCards.length > 0) {
+              await connection.query(
+                'UPDATE credit_cards SET cold_balance = cold_balance + ?, updated_at = NOW() WHERE id = ?',
+                [amount, transaction.source_card_id]
+              );
+            }
+          }
+          newColdBalance -= amount;
+        }
+      } else if (transaction.type === 'expense') {
+        if (transaction.subtype === 'ad_account_spend') {
+          // Reverse: add back to real balance
+          newRealBalance += amount;
+        } else if (transaction.subtype === 'real_to_cold') {
+          // Reverse: move from cold back to real
+          newColdBalance -= amount;
+          newRealBalance += amount;
+        }
+      }
+
+      // Update card balances
+      await connection.query(
+        'UPDATE credit_cards SET cold_balance = ?, real_balance = ?, updated_at = NOW() WHERE id = ?',
+        [newColdBalance, newRealBalance, card.id]
+      );
+
+      // Delete transaction
+      await connection.query('DELETE FROM card_transactions WHERE id = ?', [transactionId]);
+
+      await connection.commit();
+
+      res.json({ message: 'Transaction deleted' });
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Get all ad accounts with linked cards
+router.get('/ad-accounts', authenticate, async (req, res, next) => {
+  try {
+    const [adAccounts] = await db.query(
+      'SELECT * FROM ad_accounts ORDER BY name ASC'
+    );
+
+    // Get linked cards for each ad account
+    for (const account of adAccounts) {
+      const [cards] = await db.query(
+        `SELECT c.* FROM credit_cards c
+         INNER JOIN ad_account_cards aac ON c.id = aac.card_id
+         WHERE aac.ad_account_id = ?
+         ORDER BY c.name ASC`,
+        [account.id]
+      );
+      account.linked_cards = cards;
+    }
+
+    res.json({ ad_accounts: adAccounts });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Get single ad account
+router.get('/ad-accounts/:id', authenticate, async (req, res, next) => {
+  try {
+    const accountId = req.params.id;
+
+    const [accounts] = await db.query(
+      'SELECT * FROM ad_accounts WHERE id = ?',
+      [accountId]
+    );
+
+    if (accounts.length === 0) {
+      return res.status(404).json({ error: 'Ad account not found' });
+    }
+
+    const account = accounts[0];
+
+    // Get linked cards
+    const [cards] = await db.query(
+      `SELECT c.* FROM credit_cards c
+       INNER JOIN ad_account_cards aac ON c.id = aac.card_id
+       WHERE aac.ad_account_id = ?
+       ORDER BY c.name ASC`,
+      [accountId]
+    );
+
+    account.linked_cards = cards;
+
+    res.json({ ad_account: account });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Create ad account
+router.post('/ad-accounts', authenticate, auditLog('ad_account'), async (req, res, next) => {
+  try {
+    const { name } = req.body;
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: 'Name is required' });
+    }
+
+    const [result] = await db.query(
+      `INSERT INTO ad_accounts (name, created_at)
+       VALUES (?, NOW())`,
+      [name.trim()]
+    );
+
+    const [newAccount] = await db.query(
+      'SELECT * FROM ad_accounts WHERE id = ?',
+      [result.insertId]
+    );
+
+    newAccount[0].linked_cards = [];
+
+    res.status(201).json({ ad_account: newAccount[0] });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Update ad account
+router.put('/ad-accounts/:id', authenticate, auditLog('ad_account'), async (req, res, next) => {
+  try {
+    const accountId = req.params.id;
+    const { name } = req.body;
+
+    const [accounts] = await db.query(
+      'SELECT * FROM ad_accounts WHERE id = ?',
+      [accountId]
+    );
+
+    if (accounts.length === 0) {
+      return res.status(404).json({ error: 'Ad account not found' });
+    }
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: 'Name is required' });
+    }
+
+    await db.query(
+      'UPDATE ad_accounts SET name = ?, updated_at = NOW() WHERE id = ?',
+      [name.trim(), accountId]
+    );
+
+    const [updatedAccount] = await db.query(
+      'SELECT * FROM ad_accounts WHERE id = ?',
+      [accountId]
+    );
+
+    // Get linked cards
+    const [cards] = await db.query(
+      `SELECT c.* FROM credit_cards c
+       INNER JOIN ad_account_cards aac ON c.id = aac.card_id
+       WHERE aac.ad_account_id = ?
+       ORDER BY c.name ASC`,
+      [accountId]
+    );
+
+    updatedAccount[0].linked_cards = cards;
+
+    res.json({ ad_account: updatedAccount[0] });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Delete ad account
+router.delete('/ad-accounts/:id', authenticate, auditLog('ad_account'), async (req, res, next) => {
+  try {
+    const accountId = req.params.id;
+
+    const [accounts] = await db.query(
+      'SELECT * FROM ad_accounts WHERE id = ?',
+      [accountId]
+    );
+
+    if (accounts.length === 0) {
+      return res.status(404).json({ error: 'Ad account not found' });
+    }
+
+    // Links will be cascade deleted
+    await db.query('DELETE FROM ad_accounts WHERE id = ?', [accountId]);
+
     res.json({ message: 'Ad account deleted' });
-  } catch (err) {
-    next(err);
+  } catch (error) {
+    next(error);
   }
 });
 
-const applyRevenueColdToReal = async (conn, { card_id, amount, note, userId }) => {
-  const [cards] = await conn.query(
-    `SELECT id, cold_balance, real_balance, dotation_limit, dotation_used
-     FROM marketing_cards
-     WHERE id = ?
-     FOR UPDATE`,
-    [card_id]
-  );
-  if (cards.length === 0) return { status: 404, error: 'Card not found' };
-  const card = cards[0];
-
-  if (card.cold_balance < amount) return { status: 400, error: 'Insufficient cold balance' };
-  if (card.dotation_used + amount > card.dotation_limit) return { status: 400, error: 'Insufficient dotation left' };
-
-  await conn.query(
-    `UPDATE marketing_cards
-     SET cold_balance = cold_balance - ?, real_balance = real_balance + ?, dotation_used = dotation_used + ?, updated_at = NOW()
-     WHERE id = ?`,
-    [amount, amount, amount, card_id]
-  );
-
-  const [result] = await conn.query(
-    `INSERT INTO marketing_transactions (type, kind, card_id, amount, note, created_by, created_at)
-     VALUES ('revenue', 'cold_to_real', ?, ?, ?, ?, NOW())`,
-    [card_id, amount, note || null, userId]
-  );
-
-  return { status: 201, data: { id: result.insertId } };
-};
-
-const applyRevenueFromOtherCardCold = async (conn, { source_card_id, target_card_id, amount, note, userId }) => {
-  if (source_card_id === target_card_id) return { status: 400, error: 'Source and target cards must be different' };
-
-  const [targetCards] = await conn.query(
-    `SELECT id, dotation_limit, dotation_used
-     FROM marketing_cards
-     WHERE id = ?
-     FOR UPDATE`,
-    [target_card_id]
-  );
-  if (targetCards.length === 0) return { status: 404, error: 'Target card not found' };
-  if (targetCards[0].dotation_used + amount > targetCards[0].dotation_limit) return { status: 400, error: 'Insufficient dotation left' };
-
-  const [sourceCards] = await conn.query(
-    `SELECT id, cold_balance
-     FROM marketing_cards
-     WHERE id = ?
-     FOR UPDATE`,
-    [source_card_id]
-  );
-  if (sourceCards.length === 0) return { status: 404, error: 'Source card not found' };
-  if (sourceCards[0].cold_balance < amount) return { status: 400, error: 'Insufficient source cold balance' };
-
-  await conn.query(
-    `UPDATE marketing_cards
-     SET cold_balance = cold_balance - ?, updated_at = NOW()
-     WHERE id = ?`,
-    [amount, source_card_id]
-  );
-
-  await conn.query(
-    `UPDATE marketing_cards
-     SET real_balance = real_balance + ?, dotation_used = dotation_used + ?, updated_at = NOW()
-     WHERE id = ?`,
-    [amount, amount, target_card_id]
-  );
-
-  const [result] = await conn.query(
-    `INSERT INTO marketing_transactions (type, kind, card_id, source_card_id, amount, note, created_by, created_at)
-     VALUES ('revenue', 'from_card_cold', ?, ?, ?, ?, ?, NOW())`,
-    [target_card_id, source_card_id, amount, note || null, userId]
-  );
-
-  return { status: 201, data: { id: result.insertId } };
-};
-
-const applyExpenseSpend = async (conn, { card_id, ad_account_id, amount, note, userId }) => {
-  const [cards] = await conn.query(
-    `SELECT id, real_balance, dotation_limit, dotation_used
-     FROM marketing_cards
-     WHERE id = ?
-     FOR UPDATE`,
-    [card_id]
-  );
-  if (cards.length === 0) return { status: 404, error: 'Card not found' };
-  const card = cards[0];
-
-  if (card.real_balance < amount) return { status: 400, error: 'Insufficient real balance' };
-  if (card.dotation_used + amount > card.dotation_limit) return { status: 400, error: 'Insufficient dotation left' };
-
-  const [adAccounts] = await conn.query('SELECT id FROM marketing_ad_accounts WHERE id = ? LIMIT 1', [ad_account_id]);
-  if (adAccounts.length === 0) return { status: 404, error: 'Ad account not found' };
-
-  await conn.query(
-    `UPDATE marketing_cards
-     SET real_balance = real_balance - ?, dotation_used = dotation_used + ?, updated_at = NOW()
-     WHERE id = ?`,
-    [amount, amount, card_id]
-  );
-
-  const [result] = await conn.query(
-    `INSERT INTO marketing_transactions (type, kind, card_id, ad_account_id, amount, note, created_by, created_at)
-     VALUES ('expense', 'spend_ad_account', ?, ?, ?, ?, ?, NOW())`,
-    [card_id, ad_account_id, amount, note || null, userId]
-  );
-
-  return { status: 201, data: { id: result.insertId } };
-};
-
-const applyExpenseRealToCold = async (conn, { card_id, amount, note, userId }) => {
-  const [cards] = await conn.query(
-    `SELECT id, cold_balance, real_balance, dotation_used
-     FROM marketing_cards
-     WHERE id = ?
-     FOR UPDATE`,
-    [card_id]
-  );
-  if (cards.length === 0) return { status: 404, error: 'Card not found' };
-  const card = cards[0];
-
-  if (card.real_balance < amount) return { status: 400, error: 'Insufficient real balance' };
-  if (card.dotation_used < amount) return { status: 400, error: 'Cannot restore more dotation than used' };
-
-  await conn.query(
-    `UPDATE marketing_cards
-     SET real_balance = real_balance - ?, cold_balance = cold_balance + ?, dotation_used = dotation_used - ?, updated_at = NOW()
-     WHERE id = ?`,
-    [amount, amount, amount, card_id]
-  );
-
-  const [result] = await conn.query(
-    `INSERT INTO marketing_transactions (type, kind, card_id, amount, note, created_by, created_at)
-     VALUES ('expense', 'real_to_cold', ?, ?, ?, ?, NOW())`,
-    [card_id, amount, note || null, userId]
-  );
-
-  return { status: 201, data: { id: result.insertId } };
-};
-
-router.post('/transactions/revenue/cold-to-real', authenticate, requireAdmin, async (req, res, next) => {
+// Link card to ad account
+router.post('/ad-accounts/:id/cards', authenticate, auditLog('ad_account_card'), async (req, res, next) => {
   try {
-    const card_id = Number(req.body.card_id);
-    const amount = validateMoney(req.body.amount);
-    const note = req.body.note;
+    const accountId = req.params.id;
+    const { card_id } = req.body;
 
-    if (!card_id) return res.status(400).json({ error: 'Card ID is required' });
-    if (amount === null || amount <= 0) return res.status(400).json({ error: 'Amount must be greater than 0' });
+    if (!card_id) {
+      return res.status(400).json({ error: 'Card ID is required' });
+    }
 
-    const result = await withTransaction((conn) =>
-      applyRevenueColdToReal(conn, { card_id, amount, note, userId: req.userId })
+    // Check if ad account exists
+    const [accounts] = await db.query(
+      'SELECT id FROM ad_accounts WHERE id = ?',
+      [accountId]
     );
 
-    if (result.error) return res.status(result.status).json({ error: result.error });
-    res.status(result.status).json(result.data);
-  } catch (err) {
-    next(err);
-  }
-});
+    if (accounts.length === 0) {
+      return res.status(404).json({ error: 'Ad account not found' });
+    }
 
-router.post('/transactions/revenue/from-card-cold', authenticate, requireAdmin, async (req, res, next) => {
-  try {
-    const source_card_id = Number(req.body.source_card_id);
-    const target_card_id = Number(req.body.target_card_id);
-    const amount = validateMoney(req.body.amount);
-    const note = req.body.note;
-
-    if (!source_card_id || !target_card_id) return res.status(400).json({ error: 'Source and target card IDs are required' });
-    if (amount === null || amount <= 0) return res.status(400).json({ error: 'Amount must be greater than 0' });
-
-    const result = await withTransaction((conn) =>
-      applyRevenueFromOtherCardCold(conn, { source_card_id, target_card_id, amount, note, userId: req.userId })
+    // Check if card exists
+    const [cards] = await db.query(
+      'SELECT id FROM credit_cards WHERE id = ?',
+      [card_id]
     );
 
-    if (result.error) return res.status(result.status).json({ error: result.error });
-    res.status(result.status).json(result.data);
-  } catch (err) {
-    next(err);
-  }
-});
+    if (cards.length === 0) {
+      return res.status(404).json({ error: 'Card not found' });
+    }
 
-router.post('/transactions/expense/spend', authenticate, requireAdmin, async (req, res, next) => {
-  try {
-    const card_id = Number(req.body.card_id);
-    const ad_account_id = Number(req.body.ad_account_id);
-    const amount = validateMoney(req.body.amount);
-    const note = req.body.note;
-
-    if (!card_id) return res.status(400).json({ error: 'Card ID is required' });
-    if (!ad_account_id) return res.status(400).json({ error: 'Ad account ID is required' });
-    if (amount === null || amount <= 0) return res.status(400).json({ error: 'Amount must be greater than 0' });
-
-    const result = await withTransaction((conn) =>
-      applyExpenseSpend(conn, { card_id, ad_account_id, amount, note, userId: req.userId })
+    // Check if link already exists
+    const [existing] = await db.query(
+      'SELECT id FROM ad_account_cards WHERE ad_account_id = ? AND card_id = ?',
+      [accountId, card_id]
     );
 
-    if (result.error) return res.status(result.status).json({ error: result.error });
-    res.status(result.status).json(result.data);
-  } catch (err) {
-    next(err);
-  }
-});
+    if (existing.length > 0) {
+      return res.status(400).json({ error: 'Card is already linked to this ad account' });
+    }
 
-router.post('/transactions/expense/real-to-cold', authenticate, requireAdmin, async (req, res, next) => {
-  try {
-    const card_id = Number(req.body.card_id);
-    const amount = validateMoney(req.body.amount);
-    const note = req.body.note;
-
-    if (!card_id) return res.status(400).json({ error: 'Card ID is required' });
-    if (amount === null || amount <= 0) return res.status(400).json({ error: 'Amount must be greater than 0' });
-
-    const result = await withTransaction((conn) =>
-      applyExpenseRealToCold(conn, { card_id, amount, note, userId: req.userId })
+    await db.query(
+      'INSERT INTO ad_account_cards (ad_account_id, card_id, created_at) VALUES (?, ?, NOW())',
+      [accountId, card_id]
     );
 
-    if (result.error) return res.status(result.status).json({ error: result.error });
-    res.status(result.status).json(result.data);
-  } catch (err) {
-    next(err);
+    res.status(201).json({ message: 'Card linked to ad account' });
+  } catch (error) {
+    if (error.code === 'ER_DUP_ENTRY') {
+      return res.status(400).json({ error: 'Card is already linked to this ad account' });
+    }
+    next(error);
   }
 });
 
-router.delete('/transactions/:transactionId', authenticate, requireAdmin, async (req, res, next) => {
+// Unlink card from ad account
+router.delete('/ad-accounts/:id/cards/:cardId', authenticate, auditLog('ad_account_card'), async (req, res, next) => {
   try {
-    const transactionId = Number(req.params.transactionId);
-    if (!transactionId) return res.status(400).json({ error: 'Invalid transaction ID' });
+    const accountId = req.params.id;
+    const cardId = req.params.cardId;
 
-    const result = await withTransaction(async (conn) => {
-      const [txRows] = await conn.query(
-        `SELECT id, type, kind, card_id, source_card_id, ad_account_id, amount
-         FROM marketing_transactions
-         WHERE id = ?
-         FOR UPDATE`,
-        [transactionId]
-      );
-      if (txRows.length === 0) return { status: 404, error: 'Transaction not found' };
-      const tx = txRows[0];
+    const [links] = await db.query(
+      'SELECT id FROM ad_account_cards WHERE ad_account_id = ? AND card_id = ?',
+      [accountId, cardId]
+    );
 
-      if (tx.kind === 'cold_to_real') {
-        const [cards] = await conn.query(
-          `SELECT cold_balance, real_balance, dotation_used
-           FROM marketing_cards
-           WHERE id = ?
-           FOR UPDATE`,
-          [tx.card_id]
-        );
-        if (cards.length === 0) return { status: 409, error: 'Card missing' };
-        if (cards[0].real_balance < tx.amount) return { status: 409, error: 'Cannot delete: real balance would go negative' };
-        if (cards[0].dotation_used < tx.amount) return { status: 409, error: 'Cannot delete: dotation usage would go negative' };
+    if (links.length === 0) {
+      return res.status(404).json({ error: 'Link not found' });
+    }
 
-        await conn.query(
-          `UPDATE marketing_cards
-           SET cold_balance = cold_balance + ?, real_balance = real_balance - ?, dotation_used = dotation_used - ?, updated_at = NOW()
-           WHERE id = ?`,
-          [tx.amount, tx.amount, tx.amount, tx.card_id]
-        );
-      } else if (tx.kind === 'from_card_cold') {
-        const [targetCards] = await conn.query(
-          `SELECT real_balance, dotation_used
-           FROM marketing_cards
-           WHERE id = ?
-           FOR UPDATE`,
-          [tx.card_id]
-        );
-        if (targetCards.length === 0) return { status: 409, error: 'Target card missing' };
-        if (targetCards[0].real_balance < tx.amount) return { status: 409, error: 'Cannot delete: target real balance would go negative' };
-        if (targetCards[0].dotation_used < tx.amount) return { status: 409, error: 'Cannot delete: target dotation usage would go negative' };
+    await db.query(
+      'DELETE FROM ad_account_cards WHERE ad_account_id = ? AND card_id = ?',
+      [accountId, cardId]
+    );
 
-        const [sourceCards] = await conn.query(
-          `SELECT cold_balance
-           FROM marketing_cards
-           WHERE id = ?
-           FOR UPDATE`,
-          [tx.source_card_id]
-        );
-        if (sourceCards.length === 0) return { status: 409, error: 'Source card missing' };
+    res.json({ message: 'Card unlinked from ad account' });
+  } catch (error) {
+    next(error);
+  }
+});
 
-        await conn.query(
-          `UPDATE marketing_cards
-           SET cold_balance = cold_balance + ?, updated_at = NOW()
-           WHERE id = ?`,
-          [tx.amount, tx.source_card_id]
-        );
+// Get global summary
+router.get('/summary', authenticate, async (req, res, next) => {
+  try {
+    const [cards] = await db.query('SELECT * FROM credit_cards');
 
-        await conn.query(
-          `UPDATE marketing_cards
-           SET real_balance = real_balance - ?, dotation_used = dotation_used - ?, updated_at = NOW()
-           WHERE id = ?`,
-          [tx.amount, tx.amount, tx.card_id]
-        );
-      } else if (tx.kind === 'spend_ad_account') {
-        const [cards] = await conn.query(
-          `SELECT dotation_limit, dotation_used
-           FROM marketing_cards
-           WHERE id = ?
-           FOR UPDATE`,
-          [tx.card_id]
-        );
-        if (cards.length === 0) return { status: 409, error: 'Card missing' };
-        if (cards[0].dotation_used < tx.amount) return { status: 409, error: 'Cannot delete: dotation usage would go negative' };
+    let totalColdBalance = 0;
+    let totalRealBalance = 0;
+    let totalDotation = 0;
 
-        await conn.query(
-          `UPDATE marketing_cards
-           SET real_balance = real_balance + ?, dotation_used = dotation_used - ?, updated_at = NOW()
-           WHERE id = ?`,
-          [tx.amount, tx.amount, tx.card_id]
-        );
-      } else if (tx.kind === 'real_to_cold') {
-        const [cards] = await conn.query(
-          `SELECT cold_balance, dotation_limit, dotation_used
-           FROM marketing_cards
-           WHERE id = ?
-           FOR UPDATE`,
-          [tx.card_id]
-        );
-        if (cards.length === 0) return { status: 409, error: 'Card missing' };
-        if (cards[0].cold_balance < tx.amount) return { status: 409, error: 'Cannot delete: cold balance would go negative' };
-        if (cards[0].dotation_used + tx.amount > cards[0].dotation_limit) return { status: 409, error: 'Cannot delete: insufficient dotation left' };
-
-        await conn.query(
-          `UPDATE marketing_cards
-           SET real_balance = real_balance + ?, cold_balance = cold_balance - ?, dotation_used = dotation_used + ?, updated_at = NOW()
-           WHERE id = ?`,
-          [tx.amount, tx.amount, tx.amount, tx.card_id]
-        );
-      } else {
-        return { status: 400, error: 'Unsupported transaction kind' };
-      }
-
-      await conn.query('DELETE FROM marketing_transactions WHERE id = ?', [transactionId]);
-      return { status: 200, data: { message: 'Transaction deleted' } };
+    cards.forEach(card => {
+      totalColdBalance += parseFloat(card.cold_balance);
+      totalRealBalance += parseFloat(card.real_balance);
+      totalDotation += parseFloat(card.dotation);
     });
 
-    if (result.error) return res.status(result.status).json({ error: result.error });
-    res.json(result.data);
-  } catch (err) {
-    next(err);
+    const totalBalance = totalColdBalance + totalRealBalance;
+    const totalAvailableDotation = totalDotation - totalRealBalance;
+
+    res.json({
+      summary: {
+        total_cold_balance: totalColdBalance,
+        total_real_balance: totalRealBalance,
+        total_balance: totalBalance,
+        total_dotation: totalDotation,
+        total_available_dotation: totalAvailableDotation,
+        total_cards: cards.length
+      }
+    });
+  } catch (error) {
+    next(error);
   }
 });
 

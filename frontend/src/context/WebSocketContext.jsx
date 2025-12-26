@@ -28,20 +28,11 @@ export const WebSocketProvider = ({ children }) => {
     const token = api.getToken();
     if (!token) return;
 
-    // Use runtime config first, then build-time config, then fallback
-    // Priority: 1) window.__APP_CONFIG__.WS_URL, 2) VITE_WS_URL, 3) Relative path
+    // Use environment variable in production, or current host in development
     let wsUrl;
-    const runtimeConfig = typeof window !== 'undefined' && window.__APP_CONFIG__;
-    const runtimeWsUrl = runtimeConfig?.WS_URL;
-    
-    if (runtimeWsUrl) {
-      // Runtime config from config.js
-      wsUrl = `${runtimeWsUrl}/ws?token=${token}`;
-    } else if (import.meta.env.VITE_WS_URL) {
-      // Build-time config
+    if (import.meta.env.VITE_WS_URL) {
       wsUrl = `${import.meta.env.VITE_WS_URL}/ws?token=${token}`;
     } else {
-      // Fallback to relative path (same host)
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       wsUrl = `${protocol}//${window.location.host}/ws?token=${token}`;
     }

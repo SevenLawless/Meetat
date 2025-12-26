@@ -1,125 +1,11 @@
+// Use environment variable in production, or proxy in development
+const API_BASE = import.meta.env.VITE_API_URL 
+  ? `${import.meta.env.VITE_API_URL}/api`
+  : '/api';
+
 class ApiService {
   constructor() {
     this.token = localStorage.getItem('token');
-  }
-
-  isLoopbackHost(hostname) {
-    if (!hostname) return false;
-    const normalized = hostname.toLowerCase();
-    return (
-      normalized === 'localhost' ||
-      normalized === '127.0.0.1' ||
-      normalized === '0.0.0.0' ||
-      normalized === '::1'
-    );
-  }
-
-  // Get API base URL dynamically at request time
-  // Priority: 1) Runtime config (window.__APP_CONFIG__), 2) Build-time config (VITE_API_URL), 3) Fallback
-  // This handles cases where the build was done with localhost but deployed to production
-  getApiBase() {
-    const isProduction = import.meta.env.MODE === 'production' || import.meta.env.PROD;
-    const currentHost = typeof window !== 'undefined' ? window.location.hostname : '';
-    const currentIsLoopback = this.isLoopbackHost(currentHost);
-    
-    // Check for runtime configuration first (from config.js)
-    const runtimeConfig = typeof window !== 'undefined' && window.__APP_CONFIG__;
-    const runtimeApiUrl = runtimeConfig?.API_URL;
-    
-    // Development: use relative path (Vite proxy handles it)
-    if (!isProduction) {
-      // In development, runtime config can override if explicitly set
-      if (runtimeApiUrl) {
-        const normalized = `${runtimeApiUrl}`.replace(/\/$/, '');
-        return `${normalized}/api`;
-      }
-      return '/api';
-    }
-    
-    // Production: Priority 1 - Runtime config (from config.js)
-    if (runtimeApiUrl) {
-      const normalizedApiUrl = `${runtimeApiUrl}`.replace(/\/$/, '');
-      
-      try {
-        const parsed = new URL(normalizedApiUrl);
-        if (this.isLoopbackHost(parsed.hostname) && !currentIsLoopback) {
-          if (!this._warnedAboutLocalhost) {
-            console.warn(
-              '⚠️ Runtime API_URL points to a local address, but the app is not running on localhost. ' +
-              'Using relative API path (/api). ' +
-              'Update config.js with your backend URL for production.'
-            );
-            this._warnedAboutLocalhost = true;
-          }
-          return '/api';
-        }
-      } catch {
-        const lower = normalizedApiUrl.toLowerCase();
-        if (
-          (lower.includes('localhost') || lower.includes('127.0.0.1') || lower.includes('0.0.0.0')) &&
-          !currentIsLoopback
-        ) {
-          if (!this._warnedAboutLocalhost) {
-            console.warn(
-              '⚠️ Runtime API_URL looks like a local address, but the app is not running on localhost. ' +
-              'Using relative API path (/api). ' +
-              'Update config.js with your backend URL for production.'
-            );
-            this._warnedAboutLocalhost = true;
-          }
-          return '/api';
-        }
-      }
-      
-      return `${normalizedApiUrl}/api`;
-    }
-    
-    // Priority 2 - Build-time config (VITE_API_URL)
-    const viteApiUrl = import.meta.env.VITE_API_URL;
-    if (viteApiUrl) {
-      const normalizedApiUrl = `${viteApiUrl}`.replace(/\/$/, '');
-
-      try {
-        const parsed = new URL(normalizedApiUrl);
-        if (this.isLoopbackHost(parsed.hostname) && !currentIsLoopback) {
-          if (!this._warnedAboutLocalhost) {
-            console.warn(
-              '⚠️ VITE_API_URL points to a local address, but the app is not running on localhost. ' +
-              'Using relative API path (/api). ' +
-              'Set VITE_API_URL to your backend URL for production, or configure config.js.'
-            );
-            this._warnedAboutLocalhost = true;
-          }
-          return '/api';
-        }
-      } catch {
-        const lower = normalizedApiUrl.toLowerCase();
-        if (
-          (lower.includes('localhost') || lower.includes('127.0.0.1') || lower.includes('0.0.0.0')) &&
-          !currentIsLoopback
-        ) {
-          if (!this._warnedAboutLocalhost) {
-            console.warn(
-              '⚠️ VITE_API_URL looks like a local address, but the app is not running on localhost. ' +
-              'Using relative API path (/api). ' +
-              'Set VITE_API_URL to your backend URL for production, or configure config.js.'
-            );
-            this._warnedAboutLocalhost = true;
-          }
-          return '/api';
-        }
-      }
-
-      return `${normalizedApiUrl}/api`;
-    }
-    
-    // Priority 3 - Fallback to relative path
-    // This will work if backend and frontend are on same domain
-    // Or if Railway/proxy is configured to route /api to backend
-    if (currentIsLoopback) {
-      return 'http://localhost:3001/api';
-    }
-    return '/api';
   }
 
   setToken(token) {
@@ -136,8 +22,7 @@ class ApiService {
   }
 
   async request(endpoint, options = {}) {
-    const apiBase = this.getApiBase();
-    const url = `${apiBase}${endpoint}`;
+    const url = `${API_BASE}${endpoint}`;
     const headers = {
       'Content-Type': 'application/json',
       ...options.headers,
@@ -147,30 +32,10 @@ class ApiService {
       headers['Authorization'] = `Bearer ${this.getToken()}`;
     }
 
-    let response;
-    try {
-      response = await fetch(url, {
-        ...options,
-        headers,
-      });
-    } catch (error) {
-      const hostHint = (() => {
-        try {
-          const parsed = new URL(url, typeof window !== 'undefined' ? window.location.origin : undefined);
-          if (this.isLoopbackHost(parsed.hostname)) {
-            return `Cannot reach backend at ${parsed.origin}. Make sure the backend is running and listening on that port.`;
-          }
-          return `Network error while calling ${parsed.origin}.`;
-        } catch {
-          return `Network error while calling ${url}.`;
-        }
-      })();
-      const errorMessage =
-        error instanceof Error && error.message
-          ? `${hostHint} (${error.message})`
-          : hostHint;
-      throw new Error(errorMessage);
-    }
+    const response = await fetch(url, {
+      ...options,
+      headers,
+    });
 
     // Handle connection errors gracefully
     if (!response.ok && response.status === 0) {
@@ -189,17 +54,6 @@ class ApiService {
       }
     } else {
       const text = await response.text();
-      // Detect if we got HTML instead of JSON (likely hitting static file server)
-      if (text.trim().startsWith('<!DOCTYPE html>') || text.trim().startsWith('<html')) {
-        const isProduction = import.meta.env.MODE === 'production' || import.meta.env.PROD;
-        const apiUrl = import.meta.env.VITE_API_URL;
-        const errorMsg = isProduction && !apiUrl
-          ? 'API configuration error: VITE_API_URL is not set. The frontend is trying to use a relative API path, but in production it needs an absolute backend URL. Please set VITE_API_URL environment variable to your backend URL (e.g., https://your-backend.railway.app).'
-          : isProduction
-          ? `API configuration error: Received HTML instead of JSON from ${url}. This usually means the API request hit the static file server instead of the backend. Please verify that VITE_API_URL is set correctly (currently: ${apiUrl || 'not set'}).`
-          : `API error: Received HTML instead of JSON from ${url}. The backend may not be running or the API URL is incorrect.`;
-        throw new Error(errorMsg);
-      }
       throw new Error(`Server error: ${response.status} ${response.statusText} - ${text.substring(0, 100)}`);
     }
 
@@ -357,8 +211,7 @@ class ApiService {
     const formData = new FormData();
     formData.append('file', file);
 
-    const apiBase = this.getApiBase();
-    const response = await fetch(`${apiBase}/tasks/${taskId}/attachments`, {
+    const response = await fetch(`${API_BASE}/tasks/${taskId}/attachments`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${this.getToken()}`,
@@ -504,83 +357,6 @@ class ApiService {
     return this.request(`/campaigns/project/${projectId}/aggregate?${params}`);
   }
 
-  // Marketing Management (admin only)
-  async getMarketingOverview() {
-    return this.request('/marketing/overview');
-  }
-
-  async createMarketingCard(payload) {
-    return this.request('/marketing/cards', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
-  }
-
-  async updateMarketingCard(cardId, payload) {
-    return this.request(`/marketing/cards/${cardId}`, {
-      method: 'PUT',
-      body: JSON.stringify(payload),
-    });
-  }
-
-  async deleteMarketingCard(cardId) {
-    return this.request(`/marketing/cards/${cardId}`, { method: 'DELETE' });
-  }
-
-  async getMarketingCardTransactions(cardId) {
-    return this.request(`/marketing/cards/${cardId}/transactions`);
-  }
-
-  async deleteMarketingTransaction(transactionId) {
-    return this.request(`/marketing/transactions/${transactionId}`, { method: 'DELETE' });
-  }
-
-  async createMarketingRevenueColdToReal(payload) {
-    return this.request('/marketing/transactions/revenue/cold-to-real', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
-  }
-
-  async createMarketingRevenueFromOtherCardCold(payload) {
-    return this.request('/marketing/transactions/revenue/from-card-cold', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
-  }
-
-  async createMarketingExpenseSpend(payload) {
-    return this.request('/marketing/transactions/expense/spend', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
-  }
-
-  async createMarketingExpenseRealToCold(payload) {
-    return this.request('/marketing/transactions/expense/real-to-cold', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
-  }
-
-  async createMarketingAdAccount(payload) {
-    return this.request('/marketing/ad-accounts', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
-  }
-
-  async updateMarketingAdAccount(adAccountId, payload) {
-    return this.request(`/marketing/ad-accounts/${adAccountId}`, {
-      method: 'PUT',
-      body: JSON.stringify(payload),
-    });
-  }
-
-  async deleteMarketingAdAccount(adAccountId) {
-    return this.request(`/marketing/ad-accounts/${adAccountId}`, { method: 'DELETE' });
-  }
-
   // Audit logs (admin only)
   async getAuditLogs(options = {}) {
     const params = new URLSearchParams();
@@ -597,6 +373,103 @@ class ApiService {
 
   async getAuditStats() {
     return this.request('/audit/stats');
+  }
+
+  // Marketing Management
+
+  // Credit Cards
+  async getCards() {
+    return this.request('/marketing/cards');
+  }
+
+  async getCard(id) {
+    return this.request(`/marketing/cards/${id}`);
+  }
+
+  async createCard(data) {
+    return this.request('/marketing/cards', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateCard(id, data) {
+    return this.request(`/marketing/cards/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteCard(id) {
+    return this.request(`/marketing/cards/${id}`, { method: 'DELETE' });
+  }
+
+  // Transactions
+  async getCardTransactions(cardId) {
+    return this.request(`/marketing/cards/${cardId}/transactions`);
+  }
+
+  async createTransaction(cardId, data) {
+    return this.request(`/marketing/cards/${cardId}/transactions`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateTransaction(id, data) {
+    return this.request(`/marketing/transactions/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteTransaction(id) {
+    return this.request(`/marketing/transactions/${id}`, { method: 'DELETE' });
+  }
+
+  // Ad Accounts
+  async getAdAccounts() {
+    return this.request('/marketing/ad-accounts');
+  }
+
+  async getAdAccount(id) {
+    return this.request(`/marketing/ad-accounts/${id}`);
+  }
+
+  async createAdAccount(data) {
+    return this.request('/marketing/ad-accounts', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateAdAccount(id, data) {
+    return this.request(`/marketing/ad-accounts/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteAdAccount(id) {
+    return this.request(`/marketing/ad-accounts/${id}`, { method: 'DELETE' });
+  }
+
+  async linkCardToAdAccount(adAccountId, cardId) {
+    return this.request(`/marketing/ad-accounts/${adAccountId}/cards`, {
+      method: 'POST',
+      body: JSON.stringify({ card_id: cardId }),
+    });
+  }
+
+  async unlinkCardFromAdAccount(adAccountId, cardId) {
+    return this.request(`/marketing/ad-accounts/${adAccountId}/cards/${cardId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // Summary
+  async getMarketingSummary() {
+    return this.request('/marketing/summary');
   }
 }
 

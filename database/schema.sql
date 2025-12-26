@@ -189,59 +189,6 @@ CREATE TABLE IF NOT EXISTS ad_metrics (
     INDEX idx_date (date)
 );
 
--- Marketing Management
-CREATE TABLE IF NOT EXISTS marketing_cards (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    name VARCHAR(100) NOT NULL UNIQUE,
-    last4 CHAR(4) NOT NULL,
-    dotation_limit DECIMAL(12, 2) NOT NULL DEFAULT 0,
-    dotation_used DECIMAL(12, 2) NOT NULL DEFAULT 0,
-    cold_balance DECIMAL(12, 2) NOT NULL DEFAULT 0,
-    real_balance DECIMAL(12, 2) NOT NULL DEFAULT 0,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_name (name)
-);
-
-CREATE TABLE IF NOT EXISTS marketing_ad_accounts (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    name VARCHAR(150) NOT NULL UNIQUE,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_name (name)
-);
-
-CREATE TABLE IF NOT EXISTS marketing_ad_account_cards (
-    ad_account_id INT NOT NULL,
-    card_id INT NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (ad_account_id, card_id),
-    FOREIGN KEY (ad_account_id) REFERENCES marketing_ad_accounts(id) ON DELETE CASCADE,
-    FOREIGN KEY (card_id) REFERENCES marketing_cards(id) ON DELETE CASCADE,
-    INDEX idx_ad_account (ad_account_id),
-    INDEX idx_card (card_id)
-);
-
-CREATE TABLE IF NOT EXISTS marketing_transactions (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    type ENUM('revenue', 'expense') NOT NULL,
-    kind VARCHAR(50) NOT NULL,
-    card_id INT NOT NULL,
-    source_card_id INT NULL,
-    ad_account_id INT NULL,
-    amount DECIMAL(12, 2) NOT NULL,
-    note TEXT,
-    created_by INT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (card_id) REFERENCES marketing_cards(id) ON DELETE CASCADE,
-    FOREIGN KEY (source_card_id) REFERENCES marketing_cards(id) ON DELETE SET NULL,
-    FOREIGN KEY (ad_account_id) REFERENCES marketing_ad_accounts(id) ON DELETE SET NULL,
-    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
-    INDEX idx_card (card_id),
-    INDEX idx_type (type),
-    INDEX idx_created_at (created_at)
-);
-
 -- Audit logs
 CREATE TABLE IF NOT EXISTS audit_logs (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -256,6 +203,64 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     INDEX idx_object (object_type, object_id),
     INDEX idx_action (action),
     INDEX idx_created (created_at)
+);
+
+-- Marketing Management Tables
+
+-- Credit cards
+CREATE TABLE IF NOT EXISTS credit_cards (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL UNIQUE,
+    last_four_digits VARCHAR(4) NOT NULL,
+    dotation DECIMAL(15, 2) NOT NULL,
+    cold_balance DECIMAL(15, 2) DEFAULT 0,
+    real_balance DECIMAL(15, 2) DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_name (name)
+);
+
+-- Ad accounts
+CREATE TABLE IF NOT EXISTS ad_accounts (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_name (name)
+);
+
+-- Ad account cards (many-to-many relationship)
+CREATE TABLE IF NOT EXISTS ad_account_cards (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    ad_account_id INT NOT NULL,
+    card_id INT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (ad_account_id) REFERENCES ad_accounts(id) ON DELETE CASCADE,
+    FOREIGN KEY (card_id) REFERENCES credit_cards(id) ON DELETE CASCADE,
+    UNIQUE KEY unique_ad_account_card (ad_account_id, card_id),
+    INDEX idx_ad_account (ad_account_id),
+    INDEX idx_card (card_id)
+);
+
+-- Card transactions
+CREATE TABLE IF NOT EXISTS card_transactions (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    card_id INT NOT NULL,
+    type ENUM('revenue', 'expense') NOT NULL,
+    subtype VARCHAR(50),
+    amount DECIMAL(15, 2) NOT NULL,
+    ad_account_id INT,
+    source_card_id INT,
+    description TEXT,
+    transaction_date DATE NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (card_id) REFERENCES credit_cards(id) ON DELETE CASCADE,
+    FOREIGN KEY (ad_account_id) REFERENCES ad_accounts(id) ON DELETE SET NULL,
+    FOREIGN KEY (source_card_id) REFERENCES credit_cards(id) ON DELETE SET NULL,
+    INDEX idx_card (card_id),
+    INDEX idx_transaction_date (transaction_date),
+    INDEX idx_type (type)
 );
 
 -- Create default admin user (password: admin123)
