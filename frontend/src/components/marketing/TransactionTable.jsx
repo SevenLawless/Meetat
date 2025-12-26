@@ -1,9 +1,13 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { AgGridReact } from 'ag-grid-react';
+import { ModuleRegistry, AllCommunityModule } from 'ag-grid-community';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
 import api from '../../services/api';
 import { Edit2, Trash2 } from 'lucide-react';
+
+// Register AG Grid modules
+ModuleRegistry.registerModules([AllCommunityModule]);
 
 // Actions cell renderer component
 const ActionsCellRenderer = ({ data, onEdit, onDelete }) => {
