@@ -268,8 +268,8 @@ const ProjectPage = () => {
     return (
       <div className="text-center py-20">
         <p className="text-surface-500">Project not found</p>
-        <Link to="/" className="text-primary-700 hover:text-primary-800 mt-2 inline-block font-medium">
-          Back to Dashboard
+        <Link to="/projects" className="text-primary-700 hover:text-primary-800 mt-2 inline-block font-medium">
+          Back to Projects
         </Link>
       </div>
     );
@@ -280,7 +280,7 @@ const ProjectPage = () => {
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div className="flex items-center gap-4">
-          <Link to="/" className="icon-btn">
+          <Link to="/projects" className="icon-btn">
             <ArrowLeft className="w-5 h-5" />
           </Link>
           <div>

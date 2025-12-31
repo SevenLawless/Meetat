@@ -71,8 +71,8 @@ router.put('/:id/role', authenticate, requireAdmin, async (req, res, next) => {
     const { role } = req.body;
     const userId = req.params.id;
 
-    if (!['admin', 'user'].includes(role)) {
-      return res.status(400).json({ error: 'Invalid role. Must be admin or user' });
+    if (!['normal', 'marketing', 'admin'].includes(role)) {
+      return res.status(400).json({ error: 'Invalid role. Must be normal, marketing, or admin' });
     }
 
     if (parseInt(userId) === req.userId) {

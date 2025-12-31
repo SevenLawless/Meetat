@@ -1,50 +1,61 @@
 import React, { useState, useEffect } from 'react';
-import { Plus } from 'lucide-react';
+import { Plus, Search, Edit2, Trash2, X } from 'lucide-react';
 import api from '../services/api';
-import GlobalSummary from '../components/marketing/GlobalSummary';
-import CardList from '../components/marketing/CardList';
 import CardModal from '../components/marketing/CardModal';
 import TransactionModal from '../components/marketing/TransactionModal';
-import AdAccountList from '../components/marketing/AdAccountList';
-import AdAccountModal from '../components/marketing/AdAccountModal';
+import CardSummary from '../components/marketing/CardSummary';
 
 const MarketingManagement = () => {
   const [cards, setCards] = useState([]);
-  const [adAccounts, setAdAccounts] = useState([]);
-  const [summary, setSummary] = useState(null);
+  const [selectedCard, setSelectedCard] = useState(null);
+  const [cardDetails, setCardDetails] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   
   // Modal states
   const [showCardModal, setShowCardModal] = useState(false);
   const [editingCard, setEditingCard] = useState(null);
   const [showTransactionModal, setShowTransactionModal] = useState(false);
-  const [transactionCard, setTransactionCard] = useState(null);
   const [editingTransaction, setEditingTransaction] = useState(null);
-  const [showAdAccountModal, setShowAdAccountModal] = useState(false);
-  const [editingAdAccount, setEditingAdAccount] = useState(null);
 
   useEffect(() => {
-    loadData();
+    loadCards();
   }, []);
 
-  const loadData = async () => {
+  useEffect(() => {
+    if (selectedCard) {
+      loadCardDetails(selectedCard.id);
+    }
+  }, [selectedCard]);
+
+  const loadCards = async () => {
     try {
       setLoading(true);
-      const [cardsData, adAccountsData, summaryData] = await Promise.all([
-        api.getCards(),
-        api.getAdAccounts(),
-        api.getMarketingSummary(),
-      ]);
-      
-      setCards(cardsData.cards || []);
-      setAdAccounts(adAccountsData.ad_accounts || []);
-      setSummary(summaryData.summary || null);
+      const data = await api.getCards();
+      setCards(data.cards || []);
     } catch (error) {
-      console.error('Failed to load marketing data:', error);
+      console.error('Failed to load cards:', error);
     } finally {
       setLoading(false);
     }
   };
+
+  const loadCardDetails = async (cardId) => {
+    try {
+      const data = await api.getCard(cardId);
+      setCardDetails(data.card);
+    } catch (error) {
+      console.error('Failed to load card details:', error);
+    }
+  };
+
+  const filteredCards = cards.filter(card => {
+    const query = searchQuery.toLowerCase();
+    return (
+      card.name.toLowerCase().includes(query) ||
+      (card.identifier && card.identifier.toLowerCase().includes(query))
+    );
+  });
 
   const handleCreateCard = () => {
     setEditingCard(null);
@@ -62,158 +73,293 @@ const MarketingManagement = () => {
     } else {
       await api.createCard(cardData);
     }
-    await loadData();
+    await loadCards();
+    if (selectedCard && selectedCard.id === editingCard?.id) {
+      await loadCardDetails(selectedCard.id);
+    }
   };
 
   const handleDeleteCard = async (cardId) => {
+    if (!confirm('Are you sure you want to delete this card? All transactions will be deleted.')) {
+      return;
+    }
     try {
       await api.deleteCard(cardId);
-      await loadData();
+      if (selectedCard?.id === cardId) {
+        setSelectedCard(null);
+        setCardDetails(null);
+      }
+      await loadCards();
     } catch (error) {
       console.error('Failed to delete card:', error);
       alert(error.message || 'Failed to delete card');
     }
   };
 
-  const handleAddTransaction = (card) => {
-    setTransactionCard(card);
+  const handleAddTransaction = () => {
     setEditingTransaction(null);
     setShowTransactionModal(true);
   };
 
-  const handleEditTransaction = async (transaction) => {
+  const handleEditTransaction = (transaction) => {
     setEditingTransaction(transaction);
-    // Load the card details for this transaction
-    try {
-      const cardData = await api.getCard(transaction.card_id);
-      setTransactionCard(cardData.card || null);
-    } catch (error) {
-      console.error('Failed to load card:', error);
-      // Try to find from existing cards
-      const card = cards.find(c => c.id === transaction.card_id);
-      setTransactionCard(card || null);
-    }
     setShowTransactionModal(true);
   };
 
   const handleSaveTransaction = async () => {
-    await loadData();
+    if (selectedCard) {
+      await loadCardDetails(selectedCard.id);
+    }
   };
 
   const handleDeleteTransaction = async (transactionId) => {
+    if (!confirm('Are you sure you want to delete this transaction? This will revert the balance changes.')) {
+      return;
+    }
     try {
       await api.deleteTransaction(transactionId);
-      await loadData();
+      if (selectedCard) {
+        await loadCardDetails(selectedCard.id);
+      }
     } catch (error) {
       console.error('Failed to delete transaction:', error);
       alert(error.message || 'Failed to delete transaction');
     }
   };
 
-  const handleCreateAdAccount = () => {
-    setEditingAdAccount(null);
-    setShowAdAccountModal(true);
+  const formatCurrency = (amount) => {
+    return new Intl.NumberFormat('fr-MA', {
+      style: 'currency',
+      currency: 'MAD',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(amount);
   };
 
-  const handleEditAdAccount = (adAccount) => {
-    setEditingAdAccount(adAccount);
-    setShowAdAccountModal(true);
-  };
-
-  const handleSaveAdAccount = async (adAccountData) => {
-    if (editingAdAccount) {
-      await api.updateAdAccount(editingAdAccount.id, adAccountData);
-    } else {
-      await api.createAdAccount(adAccountData);
-    }
-    await loadData();
-  };
-
-  const handleDeleteAdAccount = async (adAccountId) => {
-    try {
-      await api.deleteAdAccount(adAccountId);
-      await loadData();
-    } catch (error) {
-      console.error('Failed to delete ad account:', error);
-      alert(error.message || 'Failed to delete ad account');
-    }
-  };
-
-  const handleLinkCard = async (adAccountId, cardId) => {
-    try {
-      await api.linkCardToAdAccount(adAccountId, cardId);
-      await loadData();
-    } catch (error) {
-      console.error('Failed to link card:', error);
-      alert(error.message || 'Failed to link card');
-    }
-  };
-
-  const handleUnlinkCard = async (adAccountId, cardId) => {
-    try {
-      await api.unlinkCardFromAdAccount(adAccountId, cardId);
-      await loadData();
-    } catch (error) {
-      console.error('Failed to unlink card:', error);
-      alert(error.message || 'Failed to unlink card');
-    }
+  const formatDate = (date) => {
+    return new Date(date).toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    });
   };
 
   return (
-    <div className="max-w-7xl mx-auto animate-fade-in">
+    <div className="max-w-full mx-auto animate-fade-in h-full">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-surface-900">Marketing Management</h1>
           <p className="text-surface-500 mt-1">
-            Manage credit cards, transactions, and ad accounts
+            Manage credit cards and transactions
           </p>
         </div>
-        <div className="flex gap-3">
-          <button
-            onClick={handleCreateCard}
-            className="btn-primary"
-          >
-            <Plus className="w-4 h-4" />
-            New Card
-          </button>
-          <button
-            onClick={handleCreateAdAccount}
-            className="btn-secondary"
-          >
-            <Plus className="w-4 h-4" />
-            New Ad Account
-          </button>
+        <button
+          onClick={handleCreateCard}
+          className="btn-primary"
+        >
+          <Plus className="w-4 h-4" />
+          New Card
+        </button>
+      </div>
+
+      {/* Two Panel Layout */}
+      <div className="flex gap-6 h-[calc(100vh-200px)]">
+        {/* Left Panel - Card List (30%) */}
+        <div className="w-[30%] flex flex-col">
+          <div className="card flex-shrink-0">
+            {/* Search Bar */}
+            <div className="relative mb-4">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-surface-400" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search cards..."
+                className="input pl-10 w-full"
+              />
+            </div>
+
+            {/* Card List */}
+            {loading ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="w-8 h-8 border-2 border-primary-200 border-t-primary-600 rounded-full animate-spin" />
+              </div>
+            ) : filteredCards.length === 0 ? (
+              <div className="text-center py-12 text-surface-500">
+                {searchQuery ? 'No cards found' : 'No cards yet. Create your first card.'}
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-[calc(100vh-350px)] overflow-y-auto">
+                {filteredCards.map((card) => (
+                  <div
+                    key={card.id}
+                    onClick={() => setSelectedCard(card)}
+                    className={`p-4 rounded-lg border-2 cursor-pointer transition-all ${
+                      selectedCard?.id === card.id
+                        ? 'border-primary-500 bg-primary-50'
+                        : 'border-surface-200 hover:border-primary-300 hover:bg-surface-50'
+                    }`}
+                  >
+                    <div className="font-semibold text-surface-900 mb-1">{card.name}</div>
+                    <div className="text-sm text-surface-600">
+                      {card.identifier || 'No identifier'}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
-      </div>
 
-      {/* Global Summary */}
-      <GlobalSummary summary={summary} />
+        {/* Right Panel - Card Details (70%) */}
+        <div className="flex-1 flex flex-col">
+          {selectedCard && cardDetails ? (
+            <div className="card flex-1 flex flex-col overflow-hidden">
+              {/* Card Header */}
+              <div className="flex items-center justify-between mb-6 pb-4 border-b border-surface-200">
+                <div>
+                  <h2 className="text-xl font-bold text-surface-900">{cardDetails.name}</h2>
+                  {cardDetails.identifier && (
+                    <p className="text-sm text-surface-500 mt-1">Identifier: {cardDetails.identifier}</p>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handleEditCard(cardDetails)}
+                    className="btn-secondary btn-sm"
+                  >
+                    <Edit2 className="w-4 h-4" />
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => handleDeleteCard(cardDetails.id)}
+                    className="btn-secondary btn-sm text-red-600 hover:text-red-700 hover:bg-red-50"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    Delete
+                  </button>
+                </div>
+              </div>
 
-      {/* Credit Cards */}
-      <div className="mb-8">
-        <CardList
-          cards={cards}
-          onEdit={handleEditCard}
-          onDelete={handleDeleteCard}
-          onAddTransaction={handleAddTransaction}
-          onDeleteTransaction={handleDeleteTransaction}
-          onEditTransaction={handleEditTransaction}
-          loading={loading}
-        />
-      </div>
+              {/* Card Summary */}
+              <div className="mb-6">
+                <h3 className="text-sm font-semibold text-surface-700 mb-3">Summary</h3>
+                <CardSummary card={cardDetails} />
+              </div>
 
-      {/* Ad Accounts */}
-      <div className="mb-8">
-        <AdAccountList
-          adAccounts={adAccounts}
-          cards={cards}
-          onEdit={handleEditAdAccount}
-          onDelete={handleDeleteAdAccount}
-          onLinkCard={handleLinkCard}
-          onUnlinkCard={handleUnlinkCard}
-          loading={loading}
-        />
+              {/* Cold Balance Section */}
+              <div className="mb-6">
+                <h3 className="text-sm font-semibold text-surface-700 mb-3">Cold Balance</h3>
+                <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                  <div className="text-2xl font-bold text-blue-700">
+                    {formatCurrency(cardDetails.cold_balance || 0)}
+                  </div>
+                </div>
+              </div>
+
+              {/* Real Balance Section */}
+              <div className="mb-6">
+                <h3 className="text-sm font-semibold text-surface-700 mb-3">Real Balance</h3>
+                <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
+                  <div className="text-2xl font-bold text-green-700">
+                    {formatCurrency(cardDetails.real_balance || 0)}
+                  </div>
+                </div>
+              </div>
+
+              {/* Transactions Section */}
+              <div className="flex-1 flex flex-col min-h-0">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-semibold text-surface-700">Transactions</h3>
+                  <button
+                    onClick={handleAddTransaction}
+                    className="btn-primary btn-sm"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Add Transaction
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-auto">
+                  {cardDetails.transactions && cardDetails.transactions.length > 0 ? (
+                    <div className="space-y-2">
+                      {cardDetails.transactions.map((transaction) => (
+                        <div
+                          key={transaction.id}
+                          className={`p-4 rounded-lg border-2 ${
+                            transaction.type === 'revenue'
+                              ? 'bg-green-50 border-green-200'
+                              : 'bg-red-50 border-red-200'
+                          }`}
+                        >
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2 mb-2">
+                                <span className={`badge ${
+                                  transaction.type === 'revenue' ? 'badge-success' : 'badge-danger'
+                                }`}>
+                                  {transaction.type === 'revenue' ? 'Revenue' : 'Expense'}
+                                </span>
+                                <span className="text-xs text-surface-500">
+                                  {transaction.subtype}
+                                </span>
+                              </div>
+                              <div className={`text-lg font-bold ${
+                                transaction.type === 'revenue' ? 'text-green-700' : 'text-red-700'
+                              }`}>
+                                {transaction.type === 'revenue' ? '+' : '-'}
+                                {formatCurrency(transaction.amount)}
+                              </div>
+                              {transaction.description && (
+                                <p className="text-sm text-surface-600 mt-1">{transaction.description}</p>
+                              )}
+                              <div className="flex items-center gap-4 mt-2 text-xs text-surface-500">
+                                <span>{formatDate(transaction.transaction_date)}</span>
+                                {transaction.ad_account_name && (
+                                  <span>Ad Account: {transaction.ad_account_name}</span>
+                                )}
+                                {transaction.source_card_name && (
+                                  <span>From: {transaction.source_card_name}</span>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => handleEditTransaction(transaction)}
+                                className="icon-btn"
+                                title="Edit"
+                              >
+                                <Edit2 className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteTransaction(transaction.id)}
+                                className="icon-btn text-red-600 hover:text-red-700 hover:bg-red-50"
+                                title="Delete"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-12 text-surface-500">
+                      No transactions yet. Add your first transaction.
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="card flex-1 flex items-center justify-center">
+              <div className="text-center">
+                <p className="text-surface-500 text-lg">Select a card to view details</p>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Modals */}
@@ -228,29 +374,17 @@ const MarketingManagement = () => {
         />
       )}
 
-      {showTransactionModal && (
+      {showTransactionModal && selectedCard && (
         <TransactionModal
           transaction={editingTransaction}
-          card={transactionCard}
+          card={selectedCard}
           cards={cards}
-          adAccounts={adAccounts}
+          adAccounts={[]}
           onClose={() => {
             setShowTransactionModal(false);
-            setTransactionCard(null);
             setEditingTransaction(null);
           }}
           onSave={handleSaveTransaction}
-        />
-      )}
-
-      {showAdAccountModal && (
-        <AdAccountModal
-          adAccount={editingAdAccount}
-          onClose={() => {
-            setShowAdAccountModal(false);
-            setEditingAdAccount(null);
-          }}
-          onSave={handleSaveAdAccount}
         />
       )}
     </div>
@@ -258,4 +392,3 @@ const MarketingManagement = () => {
 };
 
 export default MarketingManagement;
-

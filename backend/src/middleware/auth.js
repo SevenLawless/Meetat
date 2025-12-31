@@ -47,6 +47,20 @@ const requireAdmin = (req, res, next) => {
   next();
 };
 
+// Check if user is marketing or admin
+const requireMarketingAccess = (req, res, next) => {
+  if (req.user.role !== 'marketing' && req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'Marketing access required' });
+  }
+  next();
+};
+
+// Helper functions to check user roles
+const isAdmin = (user) => user && user.role === 'admin';
+const isMarketing = (user) => user && user.role === 'marketing';
+const isNormal = (user) => user && user.role === 'normal';
+const hasMarketingAccess = (user) => user && (user.role === 'marketing' || user.role === 'admin');
+
 // Check if user is member of project
 const requireProjectMember = async (req, res, next) => {
   try {
@@ -99,7 +113,12 @@ const requireProjectOwner = async (req, res, next) => {
 module.exports = {
   authenticate,
   requireAdmin,
+  requireMarketingAccess,
   requireProjectMember,
-  requireProjectOwner
+  requireProjectOwner,
+  isAdmin,
+  isMarketing,
+  isNormal,
+  hasMarketingAccess
 };
 

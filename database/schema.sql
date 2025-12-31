@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS users (
     email VARCHAR(255) NOT NULL UNIQUE,
     password_hash VARCHAR(255) NOT NULL,
     name VARCHAR(100) NOT NULL,
-    role ENUM('admin', 'user') DEFAULT 'user',
+    role ENUM('normal', 'marketing', 'admin') DEFAULT 'normal',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_email (email),
@@ -211,13 +211,15 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 CREATE TABLE IF NOT EXISTS credit_cards (
     id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(255) NOT NULL UNIQUE,
+    identifier VARCHAR(255),
     last_four_digits VARCHAR(4) NOT NULL,
     dotation DECIMAL(15, 2) NOT NULL,
     cold_balance DECIMAL(15, 2) DEFAULT 0,
     real_balance DECIMAL(15, 2) DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_name (name)
+    INDEX idx_name (name),
+    INDEX idx_identifier (identifier)
 );
 
 -- Ad accounts
@@ -268,4 +270,7 @@ CREATE TABLE IF NOT EXISTS card_transactions (
 INSERT INTO users (email, password_hash, name, role) 
 VALUES ('admin@meetat.com', '$2b$10$5QzM8X6f5N6ZJ1HZ8q5L7eZ3fJx5K8J5L7eZ3fJx5K8J5L7eZ3fJx', 'Admin', 'admin')
 ON DUPLICATE KEY UPDATE email = email;
+
+-- Migration: Update existing 'user' roles to 'normal'
+UPDATE users SET role = 'normal' WHERE role = 'user';
 

@@ -3,6 +3,7 @@ import { X } from 'lucide-react';
 
 const CardModal = ({ card, onClose, onSave }) => {
   const [name, setName] = useState('');
+  const [identifier, setIdentifier] = useState('');
   const [lastFourDigits, setLastFourDigits] = useState('');
   const [dotation, setDotation] = useState('');
   const [saving, setSaving] = useState(false);
@@ -11,10 +12,12 @@ const CardModal = ({ card, onClose, onSave }) => {
   useEffect(() => {
     if (card) {
       setName(card.name || '');
+      setIdentifier(card.identifier || '');
       setLastFourDigits(card.last_four_digits || '');
       setDotation(card.dotation || '');
     } else {
       setName('');
+      setIdentifier('');
       setLastFourDigits('');
       setDotation('');
     }
@@ -44,6 +47,7 @@ const CardModal = ({ card, onClose, onSave }) => {
     try {
       await onSave({
         name: name.trim(),
+        identifier: identifier.trim() || null,
         last_four_digits: lastFourDigits.trim(),
         dotation: parseFloat(dotation),
       });
@@ -84,6 +88,20 @@ const CardModal = ({ card, onClose, onSave }) => {
               placeholder="e.g., Business Card"
               required
             />
+          </div>
+
+          <div>
+            <label className="label">Identifier (optional)</label>
+            <input
+              type="text"
+              value={identifier}
+              onChange={(e) => setIdentifier(e.target.value)}
+              className="input"
+              placeholder="e.g., CARD-001"
+            />
+            <p className="text-xs text-surface-500 mt-1">
+              A unique identifier to help identify this card
+            </p>
           </div>
 
           <div>

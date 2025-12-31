@@ -14,7 +14,7 @@ import {
   X
 } from 'lucide-react';
 
-const Dashboard = () => {
+const Projects = () => {
   const { user } = useAuth();
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -299,4 +299,5 @@ const Dashboard = () => {
   );
 };
 
-export default Dashboard;
+export default Projects;
+

@@ -76,7 +76,7 @@ router.get('/cards/:id', authenticate, async (req, res, next) => {
 // Create card
 router.post('/cards', authenticate, auditLog('credit_card'), async (req, res, next) => {
   try {
-    const { name, last_four_digits, dotation } = req.body;
+    const { name, identifier, last_four_digits, dotation } = req.body;
 
     if (!name || !last_four_digits || dotation === undefined) {
       return res.status(400).json({ error: 'Name, last four digits, and dotation are required' });
@@ -101,9 +101,9 @@ router.post('/cards', authenticate, auditLog('credit_card'), async (req, res, ne
     }
 
     const [result] = await db.query(
-      `INSERT INTO credit_cards (name, last_four_digits, dotation, cold_balance, real_balance, created_at)
-       VALUES (?, ?, ?, 0, 0, NOW())`,
-      [name, last_four_digits, dotation]
+      `INSERT INTO credit_cards (name, identifier, last_four_digits, dotation, cold_balance, real_balance, created_at)
+       VALUES (?, ?, ?, ?, 0, 0, NOW())`,
+      [name, identifier || null, last_four_digits, dotation]
     );
 
     const [newCard] = await db.query(
@@ -124,7 +124,7 @@ router.post('/cards', authenticate, auditLog('credit_card'), async (req, res, ne
 router.put('/cards/:id', authenticate, auditLog('credit_card'), async (req, res, next) => {
   try {
     const cardId = req.params.id;
-    const { name, last_four_digits, dotation } = req.body;
+    const { name, identifier, last_four_digits, dotation } = req.body;
 
     const [cards] = await db.query(
       'SELECT * FROM credit_cards WHERE id = ?',
@@ -162,11 +162,12 @@ router.put('/cards/:id', authenticate, auditLog('credit_card'), async (req, res,
     await db.query(
       `UPDATE credit_cards 
        SET name = COALESCE(?, name),
+           identifier = COALESCE(?, identifier),
            last_four_digits = COALESCE(?, last_four_digits),
            dotation = COALESCE(?, dotation),
            updated_at = NOW()
        WHERE id = ?`,
-      [name || null, last_four_digits || null, dotation || null, cardId]
+      [name || null, identifier !== undefined ? identifier : null, last_four_digits || null, dotation || null, cardId]
     );
 
     const [updatedCard] = await db.query(
@@ -797,6 +798,98 @@ router.get('/summary', authenticate, async (req, res, next) => {
         total_dotation: totalDotation,
         total_available_dotation: totalAvailableDotation,
         total_cards: cards.length
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Get all marketing transactions (cold balance and deposit only, excluding real balance transactions)
+router.get('/transactions', authenticate, async (req, res, next) => {
+  try {
+    const { search, card_id, start_date, end_date, limit = 100, offset = 0 } = req.query;
+
+    let query = `
+      SELECT t.*, 
+        c.name as card_name,
+        c.identifier as card_identifier,
+        a.name as ad_account_name,
+        sc.name as source_card_name
+      FROM card_transactions t
+      INNER JOIN credit_cards c ON t.card_id = c.id
+      LEFT JOIN ad_accounts a ON t.ad_account_id = a.id
+      LEFT JOIN credit_cards sc ON t.source_card_id = sc.id
+      WHERE t.subtype IN ('deposit', 'cold_to_real', 'card_to_card', 'real_to_cold')
+    `;
+    const params = [];
+
+    // Filter by card
+    if (card_id) {
+      query += ' AND t.card_id = ?';
+      params.push(card_id);
+    }
+
+    // Filter by date range
+    if (start_date) {
+      query += ' AND t.transaction_date >= ?';
+      params.push(start_date);
+    }
+    if (end_date) {
+      query += ' AND t.transaction_date <= ?';
+      params.push(end_date);
+    }
+
+    // Search filter
+    if (search) {
+      query += ' AND (t.description LIKE ? OR c.name LIKE ? OR c.identifier LIKE ?)';
+      const searchPattern = `%${search}%`;
+      params.push(searchPattern, searchPattern, searchPattern);
+    }
+
+    query += ' ORDER BY t.transaction_date DESC, t.created_at DESC LIMIT ? OFFSET ?';
+    params.push(parseInt(limit), parseInt(offset));
+
+    const [transactions] = await db.query(query, params);
+
+    // Get total count for pagination
+    let countQuery = `
+      SELECT COUNT(*) as total
+      FROM card_transactions t
+      INNER JOIN credit_cards c ON t.card_id = c.id
+      WHERE t.subtype IN ('deposit', 'cold_to_real', 'card_to_card', 'real_to_cold')
+    `;
+    const countParams = [];
+
+    if (card_id) {
+      countQuery += ' AND t.card_id = ?';
+      countParams.push(card_id);
+    }
+    if (start_date) {
+      countQuery += ' AND t.transaction_date >= ?';
+      countParams.push(start_date);
+    }
+    if (end_date) {
+      countQuery += ' AND t.transaction_date <= ?';
+      countParams.push(end_date);
+    }
+    if (search) {
+      countQuery += ' AND (t.description LIKE ? OR c.name LIKE ? OR c.identifier LIKE ?)';
+      const searchPattern = `%${search}%`;
+      countParams.push(searchPattern, searchPattern, searchPattern);
+    }
+
+    const [countResult] = await db.query(countQuery, countParams);
+    const total = countResult[0].total;
+
+    res.json({
+      transactions,
+      pagination: {
+        total,
+        limit: parseInt(limit),
+        offset: parseInt(offset),
+        page: Math.floor(parseInt(offset) / parseInt(limit)) + 1,
+        totalPages: Math.ceil(total / parseInt(limit))
       }
     });
   } catch (error) {

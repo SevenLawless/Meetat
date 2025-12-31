@@ -471,6 +471,27 @@ class ApiService {
   async getMarketingSummary() {
     return this.request('/marketing/summary');
   }
+
+  // Get all marketing transactions (cold balance and deposit only)
+  async getMarketingTransactions(filters = {}) {
+    const params = new URLSearchParams();
+    if (filters.search) params.append('search', filters.search);
+    if (filters.card_id) params.append('card_id', filters.card_id);
+    if (filters.start_date) params.append('start_date', filters.start_date);
+    if (filters.end_date) params.append('end_date', filters.end_date);
+    if (filters.limit) params.append('limit', filters.limit);
+    if (filters.offset) params.append('offset', filters.offset);
+    
+    return this.request(`/marketing/transactions?${params}`);
+  }
+
+  // Users
+  async updateUserRole(userId, role) {
+    return this.request(`/users/${userId}/role`, {
+      method: 'PUT',
+      body: JSON.stringify({ role }),
+    });
+  }
 }
 
 export const api = new ApiService();

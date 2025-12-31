@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 
 const Layout = () => {
-  const { user, logout, isAdmin } = useAuth();
+  const { user, logout, isAdmin, hasMarketingAccess } = useAuth();
   const { unreadCount } = useWebSocket();
   const location = useLocation();
   const navigate = useNavigate();
@@ -61,9 +61,15 @@ const Layout = () => {
   }, [showNotifications, showUserMenu]);
 
   const navItems = [
-    { path: '/', icon: LayoutDashboard, label: 'Dashboard' },
-    { path: '/marketing', icon: CreditCard, label: 'Marketing Management' },
+    { path: '/projects', icon: LayoutDashboard, label: 'Projects' },
   ];
+
+  if (hasMarketingAccess) {
+    navItems.push(
+      { path: '/marketing-dashboard', icon: LayoutDashboard, label: 'Marketing Dashboard' },
+      { path: '/marketing', icon: CreditCard, label: 'Marketing Management' }
+    );
+  }
 
   if (isAdmin) {
     navItems.push({ path: '/admin', icon: Shield, label: 'Admin Panel' });
